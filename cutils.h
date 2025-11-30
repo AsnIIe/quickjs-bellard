@@ -29,11 +29,35 @@
 #include <string.h>
 #include <inttypes.h>
 
+#if defined(_WIN32)
+#include <windows.h>
+#include <intrin.h>
+#ifndef alloca
+#define alloca(s) _alloca(s)
+#endif
+#else 
+#include <sys/time.h>
+#endif
+
+ /* set if CPU is big endian */
+#undef WORDS_BIGENDIAN
+
+#if !defined(__has_attribute) || defined(_WIN32)
+#define likely(x)    (x)
+#define unlikely(x)  (x)
+#define force_inline __forceinline
+#define no_inline __declspec(noinline)
+#define __maybe_unused
+#define __attribute__(x)
+#define __attribute(x)
+typedef intptr_t ssize_t;
+#else
 #define likely(x)       __builtin_expect(!!(x), 1)
 #define unlikely(x)     __builtin_expect(!!(x), 0)
 #define force_inline inline __attribute__((always_inline))
 #define no_inline __attribute__((noinline))
 #define __maybe_unused __attribute__((unused))
+#endif //_WIN32
 
 #define xglue(x, y) x ## y
 #define glue(x, y) xglue(x, y)
@@ -66,6 +90,9 @@ enum {
 };
 #endif
 
+#if defined(_WIN32)
+int gettimeofday(struct timeval* tp, struct timezone* tzp);
+#endif
 void pstrcpy(char *buf, int buf_size, const char *str);
 char *pstrcat(char *buf, int buf_size, const char *s);
 int strstart(const char *str, const char *val, const char **ptr);
@@ -125,27 +152,73 @@ static inline int64_t min_int64(int64_t a, int64_t b)
         return b;
 }
 
+#if defined(_WIN32) && !defined(__clang__)
 /* WARNING: undefined if a = 0 */
-static inline int clz32(unsigned int a)
-{
+static inline int clz32(unsigned int a) {
+    unsigned long index;
+    _BitScanReverse(&index, a);
+    return 31 - index;
+}
+
+/* WARNING: undefined if a = 0 */
+static inline int clz64(uint64_t a) {
+#if INTPTR_MAX == INT64_MAX
+    unsigned long index;
+    BitScanReverse64(&index, a);
+    return 63 - index;
+#else
+    if (a >> 32)
+        return clz32((unsigned)(a >> 32));
+    else
+        return clz32((unsigned)a) + 32;
+#endif
+}
+
+/* WARNING: undefined if a = 0 */
+static inline int ctz32(unsigned int a) {
+    unsigned long index;
+    _BitScanForward(&index, a);
+    return index;
+}
+
+/* WARNING: undefined if a = 0 */
+static inline int ctz64(uint64_t a) {
+    unsigned long index;
+    BitScanForward64(&index, a);
+    return index;
+}
+
+#pragma pack(push, 1)
+struct packed_u64 {
+    uint64_t v;
+};
+
+struct packed_u32 {
+    uint32_t v;
+};
+
+struct packed_u16 {
+    uint16_t v;
+};
+#pragma pack(pop)
+#else
+/* WARNING: undefined if a = 0 */
+static inline int clz32(unsigned int a) {
     return __builtin_clz(a);
 }
 
 /* WARNING: undefined if a = 0 */
-static inline int clz64(uint64_t a)
-{
+static inline int clz64(uint64_t a) {
     return __builtin_clzll(a);
 }
 
 /* WARNING: undefined if a = 0 */
-static inline int ctz32(unsigned int a)
-{
+static inline int ctz32(unsigned int a) {
     return __builtin_ctz(a);
 }
 
 /* WARNING: undefined if a = 0 */
-static inline int ctz64(uint64_t a)
-{
+static inline int ctz64(uint64_t a) {
     return __builtin_ctzll(a);
 }
 
@@ -160,6 +233,7 @@ struct __attribute__((packed)) packed_u32 {
 struct __attribute__((packed)) packed_u16 {
     uint16_t v;
 };
+#endif //_WIN32
 
 static inline uint64_t get_u64(const uint8_t *tab)
 {

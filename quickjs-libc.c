@@ -28,19 +28,23 @@
 #include <inttypes.h>
 #include <string.h>
 #include <assert.h>
-#include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <sys/time.h>
 #include <time.h>
 #include <signal.h>
 #include <limits.h>
 #include <sys/stat.h>
-#include <dirent.h>
 #if defined(_WIN32)
 #include <windows.h>
 #include <conio.h>
-#include <utime.h>
+#include <io.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/utime.h>
+#include "platform/dirent.h"
+#define popen _popen
+#define pclose _pclose
 #else
 #include <dlfcn.h>
 #include <termios.h>
@@ -65,7 +69,9 @@ typedef sig_t sighandler_t;
 #endif
 
 /* enable the os.Worker API. It relies on POSIX threads */
+#if !defined(_WIN32)
 #define USE_WORKER
+#endif
 
 #ifdef USE_WORKER
 #include <pthread.h>
