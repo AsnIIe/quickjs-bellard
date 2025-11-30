@@ -4204,7 +4204,7 @@ static JSRejectedPromiseEntry *find_rejected_promise(JSContext *ctx, JSThreadSta
 
 void js_std_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
                                       JSValueConst reason,
-                                      BOOL is_handled, void *opaque)
+                                      JS_BOOL is_handled, void *opaque)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
     JSThreadState *ts = JS_GetRuntimeOpaque(rt);

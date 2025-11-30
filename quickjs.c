@@ -1853,7 +1853,7 @@ void JS_SetInterruptHandler(JSRuntime *rt, JSInterruptHandler *cb, void *opaque)
     rt->interrupt_opaque = opaque;
 }
 
-void JS_SetCanBlock(JSRuntime *rt, BOOL can_block)
+void JS_SetCanBlock(JSRuntime *rt, JS_BOOL can_block)
 {
     rt->can_block = can_block;
 }
@@ -4060,7 +4060,7 @@ JSValue JS_NewAtomString(JSContext *ctx, const char *str)
 /* return (NULL, 0) if exception. */
 /* return pointer into a JSString with a live ref_count */
 /* cesu8 determines if non-BMP1 codepoints are encoded as 1 or 2 utf-8 sequences */
-const char *JS_ToCStringLen2(JSContext *ctx, size_t *plen, JSValueConst val1, BOOL cesu8)
+const char *JS_ToCStringLen2(JSContext *ctx, size_t *plen, JSValueConst val1, JS_BOOL cesu8)
 {
     JSValue val;
     JSString *str, *str_new;
@@ -7833,7 +7833,7 @@ static int JS_AutoInitProperty(JSContext *ctx, JSObject *p, JSAtom prop,
 
 JSValue JS_GetPropertyInternal(JSContext *ctx, JSValueConst obj,
                                JSAtom prop, JSValueConst this_obj,
-                               BOOL throw_ref_error)
+                               JS_BOOL throw_ref_error)
 {
     JSObject *p;
     JSProperty *pr;
@@ -10593,7 +10593,7 @@ BOOL JS_IsConstructor(JSContext *ctx, JSValueConst val)
     return p->is_constructor;
 }
 
-BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, BOOL val)
+BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val)
 {
     JSObject *p;
     if (JS_VALUE_GET_TAG(func_obj) != JS_TAG_OBJECT)
@@ -10613,7 +10613,7 @@ BOOL JS_IsError(JSContext *ctx, JSValueConst val)
 }
 
 /* must be called after JS_Throw() */
-void JS_SetUncatchableException(JSContext *ctx, BOOL flag)
+void JS_SetUncatchableException(JSContext *ctx, JS_BOOL flag)
 {
     ctx->rt->current_exception_is_uncatchable = flag;
 }
@@ -55800,7 +55800,7 @@ static JSValue js_array_buffer_constructor1(JSContext *ctx,
 
 JSValue JS_NewArrayBuffer(JSContext *ctx, uint8_t *buf, size_t len,
                           JSFreeArrayBufferDataFunc *free_func, void *opaque,
-                          BOOL is_shared)
+                          JS_BOOL is_shared)
 {
     JSClassID class_id =
         is_shared ? JS_CLASS_SHARED_ARRAY_BUFFER : JS_CLASS_ARRAY_BUFFER;
