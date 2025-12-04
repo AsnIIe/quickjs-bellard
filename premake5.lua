@@ -9,22 +9,23 @@ workspace "quickjs-bellard"
 	configurations { "Debug", "Release" }
 
 	filter "platforms:x86"
-  	architecture "x86"
+  		architecture "x86"
 	filter "platforms:x64"
-  	architecture "x86_64"  
+  		architecture "x86_64"  
 	filter "platforms:arm32"
-  	architecture "ARM"  
+  		architecture "ARM"  
 	filter "platforms:arm64"
-  	architecture "ARM64"  
+  		architecture "ARM64"  
 
 	filter "system:windows"
-  	removeplatforms { "arm32" }  
+  		removeplatforms { "arm32" }  
 
 	-- Debug configuration
 	filter { "configurations:Debug" }
 		defines { "DEBUG" }
 		symbols "On"
 		optimize "Off"
+		debugdir "build/bin/%{cfg.buildcfg}/%{cfg.platform}"
 
 	-- Release configuration
 	filter { "configurations:Release" }
@@ -43,6 +44,14 @@ workspace "quickjs-bellard"
 		rtti "Off"
 		--vectorextensions "AVX2"
 
+    includedirs {
+        "thirdparty/pthread",
+    }
+    libdirs {
+        "thirdparty/libs/%{cfg.buildcfg}",
+    }
+	filter "system:windows"
+        links { "pthread_static_%{cfg.platform}.lib" }
 -----------------------------------------------------------------------------------------------------------------------
 project "libruntime"
 	language "C"
@@ -63,7 +72,7 @@ project "libruntime"
 		"platform/dirent.h",
 		"platform/getopt.h",
 		"platform/libraryloader.h",
-		
+
 		"cutils.c",
 		"libregexp.c",
 		"libunicode.c",

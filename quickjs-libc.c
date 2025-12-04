@@ -69,13 +69,16 @@ typedef sig_t sighandler_t;
 #endif
 
 /* enable the os.Worker API. It relies on POSIX threads */
-#if !defined(_WIN32)
 #define USE_WORKER
-#endif
 
 #ifdef USE_WORKER
+#if defined(_WIN32)
+#include "thirdparty/pthread/pthread.h"
+#include "platform/stdatomic.h"
+#else
 #include <pthread.h>
 #include <stdatomic.h>
+#endif
 #endif
 
 #include "cutils.h"
