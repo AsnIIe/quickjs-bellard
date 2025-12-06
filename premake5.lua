@@ -1,9 +1,18 @@
+local ver = "Unknow"
+
+(function()
+	local file = io.open("VERSION", "r");
+	ver = file:read()
+	file:close()
+end)()
 
 workspace "quickjs-bellard"
 	-- Premake output folder
 	location(path.join("build", _ACTION))
 
 	platforms { "x86", "x64", "arm32", "arm64"  } 
+
+	defines { "CONFIG_VERSION=\""..ver.."\"" }
 
 	-- Configuration settings
 	configurations { "Debug", "Release" }
