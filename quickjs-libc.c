@@ -4039,9 +4039,12 @@ static int js_os_init(JSContext *ctx, JSModuleDef *m)
 
         JS_SetClassProto(ctx, js_worker_class_id, proto);
 
-        /* set 'Worker.parent' if necessary */
+        /* set 'globalThis.self' if necessary */
         if (ts->recv_pipe && ts->send_pipe) {
-            JS_DefinePropertyValueStr(ctx, obj, "parent",
+            JSValue global_obj = JS_UNDEFINED;
+            global_obj = JS_GetGlobalObject(ctx);
+
+            JS_DefinePropertyValueStr(ctx, global_obj, "self",
                                       js_worker_ctor_internal(ctx, JS_UNDEFINED, ts->recv_pipe, ts->send_pipe),
                                       JS_PROP_C_W_E);
         }
