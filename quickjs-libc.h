@@ -38,6 +38,10 @@ JSModuleDef *js_init_module_os(JSContext *ctx, const char *module_name);
 void js_std_add_helpers(JSContext *ctx, int argc, char **argv);
 void js_std_loop(JSContext *ctx);
 JSValue js_std_await(JSContext *ctx, JSValue obj);
+int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
+                     int argc, JSValueConst* argv, int64_t interval, int64_t delay);
+void js_std_clear_timer(JSRuntime* rt, int timer_id);
+int js_std_await_jobs(JSContext* ctx);
 void js_std_init_handlers(JSRuntime *rt);
 void js_std_free_handlers(JSRuntime *rt);
 void js_std_dump_error(JSContext *ctx);

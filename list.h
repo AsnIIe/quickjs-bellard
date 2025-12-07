@@ -66,6 +66,20 @@ static inline void list_add_tail(struct list_head *el, struct list_head *head)
     __list_add(el, head->prev, head);
 }
 
+/* only for JS_RecoverySnapshot */
+static inline void list_splice(const struct list_head* list,
+                               struct list_head* head) {
+    if (!list_empty(list)) {
+        struct list_head* a = list->next;
+        struct list_head* b = list->prev;
+        struct list_head* c = head->next;
+        head->next = a;
+        a->prev = head;
+        b->next = c;
+        c->prev = b;
+    }
+}
+
 static inline void list_del(struct list_head *el)
 {
     struct list_head *prev, *next;

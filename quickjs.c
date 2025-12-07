@@ -59562,3 +59562,35 @@ int JS_AddIntrinsicWeakRef(JSContext *ctx)
     JS_FreeValue(ctx, obj);
     return 0;
 }
+
+typedef struct JS_RuntimeStackSnapshot {
+    uintptr_t stack_top;
+    JSValue current_exception;
+    struct JSStackFrame* current_stack_frame;
+    struct list_head job_list;
+} JS_RuntimeStackSnapshot;
+
+void JS_StackSnapshot(JSRuntime* rt, JSRuntimeStackSnapshot* state) {
+    JS_RuntimeStackSnapshot* s = (JS_RuntimeStackSnapshot*)state;
+    if (!s)
+        return;
+    s->stack_top = rt->stack_top;
+    s->current_exception = rt->current_exception;
+    s->current_stack_frame = rt->current_stack_frame;
+    memcpy(&s->job_list, &rt->job_list, sizeof(rt->job_list));
+
+    rt->stack_top = 0;
+    rt->current_exception = JS_NULL;
+    rt->current_stack_frame = NULL;
+    init_list_head(&rt->job_list);
+}
+
+void JS_RecoverySnapshot(JSRuntime* rt, const JSRuntimeStackSnapshot* state) {
+    const JS_RuntimeStackSnapshot* s = (const JS_RuntimeStackSnapshot*)state;
+    if (!s)
+        return;
+    rt->stack_top = s->stack_top;
+    rt->current_exception = s->current_exception;
+    rt->current_stack_frame = s->current_stack_frame;
+    list_splice(&s->job_list, &rt->job_list);
+}

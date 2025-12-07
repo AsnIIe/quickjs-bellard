@@ -674,6 +674,13 @@ JSValue __js_printf_like(2, 3) JS_ThrowRangeError(JSContext *ctx, const char *fm
 JSValue __js_printf_like(2, 3) JS_ThrowInternalError(JSContext *ctx, const char *fmt, ...);
 JSValue JS_ThrowOutOfMemory(JSContext *ctx);
 
+/*Note: for save and recover stack frame*/
+typedef struct JSRuntimeStackSnapshot {
+    char data[64];
+} JSRuntimeStackSnapshot;
+void JS_StackSnapshot(JSRuntime* rt, JSRuntimeStackSnapshot* state);
+void JS_RecoverySnapshot(JSRuntime* rt, const JSRuntimeStackSnapshot* state);
+
 void __JS_FreeValue(JSContext *ctx, JSValue v);
 static inline void JS_FreeValue(JSContext *ctx, JSValue v)
 {

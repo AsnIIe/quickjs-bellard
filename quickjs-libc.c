@@ -110,6 +110,10 @@ typedef struct {
     int timer_id;
     int64_t timeout;
     JSValue func;
+    int64_t interval;/*for setInterval()*/
+    JSValue this_val;
+    int argc;
+    JSValue argv[0];
 } JSOSTimer;
 
 typedef struct {
@@ -2208,35 +2212,48 @@ static void free_timer(JSRuntime *rt, JSOSTimer *th)
 {
     list_del(&th->link);
     JS_FreeValueRT(rt, th->func);
+    JS_FreeValueRT(rt, th->this_val);
+    for (size_t i = 0; i < th->argc; i++)
+        JS_FreeValueRT(rt, th->argv[i]);
     js_free_rt(rt, th);
 }
 
 static JSValue js_os_setTimeout(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
-    JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
     int64_t delay;
     JSValueConst func;
-    JSOSTimer *th;
 
     func = argv[0];
     if (!JS_IsFunction(ctx, func))
         return JS_ThrowTypeError(ctx, "not a function");
     if (JS_ToInt64(ctx, &delay, argv[1]))
         return JS_EXCEPTION;
-    th = js_mallocz(ctx, sizeof(*th));
-    if (!th)
+
+    int timer_id = js_std_set_timer(ctx, func, JS_UNDEFINED, 0, NULL, 0, delay);
+
+    if (!timer_id)
         return JS_EXCEPTION;
-    th->timer_id = ts->next_timer_id;
-    if (ts->next_timer_id == INT32_MAX)
-        ts->next_timer_id = 1;
-    else
-        ts->next_timer_id++;
-    th->timeout = get_time_ms() + delay;
-    th->func = JS_DupValue(ctx, func);
-    list_add_tail(&th->link, &ts->os_timers);
-    return JS_NewInt32(ctx, th->timer_id);
+    return JS_NewInt32(ctx, timer_id);
+}
+
+static JSValue js_os_setInterval(JSContext* ctx, JSValueConst this_val,
+                                 int argc, JSValueConst* argv)
+{
+    int64_t interval;
+    JSValueConst func;
+
+    func = argv[0];
+    if (!JS_IsFunction(ctx, func))
+        return JS_ThrowTypeError(ctx, "not a function");
+    if (JS_ToInt64(ctx, &interval, argv[1]))
+        return JS_EXCEPTION;
+
+    int timer_id = js_std_set_timer(ctx, func, JS_UNDEFINED, 0, NULL, interval, interval);
+
+    if (!timer_id)
+        return JS_EXCEPTION;
+    return JS_NewInt32(ctx, timer_id);
 }
 
 static JSOSTimer *find_timer_by_id(JSThreadState *ts, int timer_id)
@@ -2301,17 +2318,28 @@ static JSValue js_os_sleepAsync(JSContext *ctx, JSValueConst this_val,
     return promise;
 }
 
-static void call_handler(JSContext *ctx, JSValueConst func)
+static JS_BOOL call_handler(JSContext *ctx, JSValueConst func, JSValueConst this_val,
+                         int argc, JSValueConst* argv)
 {
     JSValue ret, func1;
+    JS_BOOL success = TRUE;
+
+    JSRuntime* rt = JS_GetRuntime(ctx);
+    JSRuntimeStackSnapshot snapshot;
+    JS_StackSnapshot(rt, &snapshot);
+
     /* 'func' might be destroyed when calling itself (if it frees the
        handler), so must take extra care */
     func1 = JS_DupValue(ctx, func);
-    ret = JS_Call(ctx, func1, JS_UNDEFINED, 0, NULL);
+    ret = JS_Call(ctx, func1, this_val, argc, argv);
     JS_FreeValue(ctx, func1);
-    if (JS_IsException(ret))
+    if (JS_IsException(ret)) {
         js_std_dump_error(ctx);
+        JS_RecoverySnapshot(rt, &snapshot);
+        success = FALSE;
+    }
     JS_FreeValue(ctx, ret);
+    return success;
 }
 
 #ifdef USE_WORKER
@@ -2462,7 +2490,7 @@ static int js_os_poll(JSContext *ctx)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
     JSThreadState *ts = JS_GetRuntimeOpaque(rt);
-    int min_delay, count;
+    int min_delay, count, rc = 0;
     int64_t cur_time, delay;
     JSOSRWHandler *rh;
     struct list_head *el;
@@ -2482,14 +2510,19 @@ static int js_os_poll(JSContext *ctx)
             JSOSTimer *th = list_entry(el, JSOSTimer, link);
             delay = th->timeout - cur_time;
             if (delay <= 0) {
-                JSValue func;
                 /* the timer expired */
-                func = th->func;
-                th->func = JS_UNDEFINED;
-                free_timer(rt, th);
-                call_handler(ctx, func);
-                JS_FreeValue(ctx, func);
-                return 0;
+                if (th->interval > 0) {
+                    th->timeout = cur_time + th->interval;
+                    if (!call_handler(ctx, th->func, th->this_val, th->argc, th->argv)) {
+                        rc = -2;
+                        free_timer(rt, th);
+                    }
+                } else {
+                    if (!call_handler(ctx, th->func, th->this_val, th->argc, th->argv))
+                        rc = -3;
+                    free_timer(rt, th);
+                }
+                return rc;
             } else if (delay < min_delay) {
                 min_delay = delay;
             }
@@ -2527,7 +2560,8 @@ static int js_os_poll(JSContext *ctx)
             list_for_each(el, &ts->os_rw_handlers) {
                 rh = list_entry(el, JSOSRWHandler, link);
                 if (rh->fd == 0 && !JS_IsNull(rh->rw_func[0])) {
-                    call_handler(ctx, rh->rw_func[0]);
+                    if (!call_handler(ctx, rh->rw_func[0], JS_UNDEFINED, 0, NULL))
+                        rc = -4;
                     /* must stop because the list may have been modified */
                     goto done;
                 }
@@ -2548,7 +2582,7 @@ static int js_os_poll(JSContext *ctx)
         Sleep(min_delay);
     }
  done:
-    return 0;
+    return rc;
 }
 
 #else
@@ -3979,7 +4013,9 @@ static const JSCFunctionListEntry js_os_funcs[] = {
 #endif
     JS_CFUNC_DEF("now", 0, js_os_now ),
     JS_CFUNC_DEF("setTimeout", 2, js_os_setTimeout ),
+    JS_CFUNC_DEF("setInterval", 2, js_os_setInterval ),
     JS_CFUNC_DEF("clearTimeout", 1, js_os_clearTimeout ),
+    JS_CFUNC_DEF("clearInterval", 1, js_os_clearTimeout ),
     JS_CFUNC_DEF("sleepAsync", 1, js_os_sleepAsync ),
     JS_PROP_STRING_DEF("platform", OS_PLATFORM, 0 ),
     JS_CFUNC_DEF("getcwd", 0, js_os_getcwd ),
@@ -4139,11 +4175,23 @@ void js_std_add_helpers(JSContext *ctx, int argc, char **argv)
     JS_SetPropertyStr(ctx, global_obj, "__loadScript",
                       JS_NewCFunction(ctx, js_loadScript, "__loadScript", 1));
 
+    JS_SetPropertyStr(ctx, global_obj, "setTimeout",
+                      JS_NewCFunction(ctx, js_os_setTimeout, "setTimeout", 2));
+    JS_SetPropertyStr(ctx, global_obj, "setInterval",
+                      JS_NewCFunction(ctx, js_os_setInterval, "setInterval", 2));
+    JS_SetPropertyStr(ctx, global_obj, "clearTimeout",
+                      JS_NewCFunction(ctx, js_os_clearTimeout, "clearTimeout", 1));
+    JS_SetPropertyStr(ctx, global_obj, "clearInterval",
+                      JS_NewCFunction(ctx, js_os_clearTimeout, "clearInterval", 1));
+
     JS_FreeValue(ctx, global_obj);
 }
 
 void js_std_init_handlers(JSRuntime *rt)
 {
+    if (!os_poll_func)
+        os_poll_func = js_os_poll;
+    
     JSThreadState *ts;
 
     ts = malloc(sizeof(*ts));
@@ -4356,6 +4404,70 @@ JSValue js_std_await(JSContext *ctx, JSValue obj)
         }
     }
     return ret;
+}
+
+/* return timer_id, 0 if exception, > 0 if successfully. */
+int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
+                     int argc, JSValueConst* argv, int64_t interval, int64_t delay) {
+    argc = argv ? argc : 0;
+
+    if (!JS_IsFunction(ctx, job_func))
+        return 0;
+
+    JSRuntime* rt = JS_GetRuntime(ctx);
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSOSTimer* th;
+
+    th = js_mallocz(ctx, sizeof(*th) + argc * sizeof(JSValue));
+    if (!th) {
+        return 0;
+    }
+    th->timer_id = ts->next_timer_id;
+    if (ts->next_timer_id == INT32_MAX)
+        ts->next_timer_id = 1;
+    else
+        ts->next_timer_id++;
+    th->interval = interval;
+    th->timeout = get_time_ms() + (delay >= 0 ? delay : 0);
+    th->func = JS_DupValue(ctx, job_func);
+    th->this_val = JS_DupValue(ctx, this_val);
+    th->argc = argc;
+    for (size_t i = 0; i < argc; i++) {
+        th->argv[i] = JS_DupValue(ctx, argv[i]);
+    }
+    list_add_tail(&th->link, &ts->os_timers);
+    return th->timer_id;
+}
+
+void js_std_clear_timer(JSRuntime* rt, int timer_id) {
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSOSTimer* th;
+
+    if (!ts)
+        return;
+
+    th = find_timer_by_id(ts, timer_id);
+    if (th)
+        free_timer(rt, th);
+}
+
+/* same as js_std_loop, execute pending jobs once,
+   return < 0 if exception, 0 if no job pending, 1 if a job was
+   executed successfully. */
+int js_std_await_jobs(JSContext* ctx) {
+    int err = 0;
+
+    err = JS_ExecutePendingJob(JS_GetRuntime(ctx), NULL);
+    if (err >= 0) {
+        if (os_poll_func)
+            err = os_poll_func(ctx);
+        else
+            err = -6;
+    } else {
+        js_std_dump_error(ctx);
+        err = -5;
+    }
+    return err + 1;
 }
 
 void js_std_eval_binary(JSContext *ctx, const uint8_t *buf, size_t buf_len,
