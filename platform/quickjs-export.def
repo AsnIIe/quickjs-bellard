@@ -214,3 +214,19 @@ rqsort
 strstart
 unicode_from_utf8
 unicode_to_utf8
+
+;The following is the extension function, add by zenx
+js_std_load_module
+JS_IsDate
+JS_GetClassConstructor
+JS_GetClassName
+JS_GetModuleExportItem
+JS_GetModuleExportItemUint32
+JS_GetModuleExportCount
+JS_GetModuleExportItemName
+JS_IsInteger
+JS_GetPropertyLength
+JS_IsObjectPlain
+JS_FindModule
+JS_SealObject
+JS_FreezeObject

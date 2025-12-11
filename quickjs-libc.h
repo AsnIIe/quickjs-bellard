@@ -53,6 +53,9 @@ int js_module_check_attributes(JSContext *ctx, void *opaque, JSValueConst attrib
 JSModuleDef *js_module_loader(JSContext *ctx,
                               const char *module_name, void *opaque,
                               JSValueConst attributes);
+/* load module from string */
+JSModuleDef* js_std_load_module(JSContext* ctx, const char* buf, size_t buf_len,
+                                const char* module_name);
 void js_std_eval_binary(JSContext *ctx, const uint8_t *buf, size_t buf_len,
                         int flags);
 void js_std_eval_binary_json_module(JSContext *ctx,

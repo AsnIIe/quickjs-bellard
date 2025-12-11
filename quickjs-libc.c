@@ -4470,6 +4470,36 @@ int js_std_await_jobs(JSContext* ctx) {
     return err + 1;
 }
 
+JSModuleDef* js_std_load_module(JSContext* ctx, const char* buf, size_t buf_len,
+                                const char* module_name)
+{
+    JSModuleDef* m;
+    JSAtom name = JS_NewAtom(ctx, module_name);
+    m = JS_FindModule(ctx, name);
+    JS_FreeAtom(ctx, name);
+    if (m) {
+        return m;
+    }
+    
+    if (!buf) {
+        JS_ThrowReferenceError(ctx, "the buffer of module is NULL");
+        return NULL;
+    }
+    JSValue func_val;
+    /* compile the module */
+    func_val = JS_Eval(ctx, (char*)buf, buf_len, module_name,
+                       JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+    if (JS_IsException(func_val))
+        return NULL;
+    /* XXX: could propagate the exception */
+    if (js_module_set_import_meta(ctx, func_val, TRUE, FALSE) != -1) {
+        /* the module is already referenced, so we must free it */
+        m = JS_VALUE_GET_PTR(func_val);
+    }
+    JS_FreeValue(ctx, func_val);
+    return m;
+}
+
 void js_std_eval_binary(JSContext *ctx, const uint8_t *buf, size_t buf_len,
                         int load_only)
 {

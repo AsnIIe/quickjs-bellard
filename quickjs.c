@@ -59563,6 +59563,8 @@ int JS_AddIntrinsicWeakRef(JSContext *ctx)
     return 0;
 }
 
+/*The following is the extension function, add by zenx*/
+
 typedef struct JS_RuntimeStackSnapshot {
     uintptr_t stack_top;
     JSValue current_exception;
@@ -59593,4 +59595,107 @@ void JS_RecoverySnapshot(JSRuntime* rt, const JSRuntimeStackSnapshot* state) {
     rt->current_exception = s->current_exception;
     rt->current_stack_frame = s->current_stack_frame;
     list_splice(&s->job_list, &rt->job_list);
+}
+
+JS_BOOL JS_IsDate(JSContext* ctx, JSValueConst obj, double* ms_since_1970) {
+    if (JS_GetClassID(obj) != JS_CLASS_DATE)
+        return FALSE;
+    double v;
+    if (JS_ThisTimeValue(ctx, &v, obj))
+        return FALSE;
+    if (ms_since_1970)
+        *ms_since_1970 = v;
+    return TRUE;
+}
+
+JSValue JS_GetClassConstructor(JSContext* ctx, JSClassID class_id) {
+    JSRuntime* rt = ctx->rt;
+    if (JS_IsRegisteredClass(rt, class_id)) {
+        return JS_GetProperty(ctx, ctx->class_proto[class_id], JS_ATOM_constructor);
+    } else {
+        return JS_UNDEFINED;
+    }
+}
+
+JSAtom JS_GetClassName(JSRuntime* rt, JSClassID class_id) {
+    if (JS_IsRegisteredClass(rt, class_id)) {
+        return JS_DupAtomRT(rt, rt->class_array[class_id].class_id);
+    } else {
+        return JS_ATOM_NULL;
+    }
+}
+
+JSValue JS_GetModuleExportItem(JSContext* ctx, JSModuleDef* m, JSAtom atom) {
+    for (int n = 0; n < m->export_entries_count; ++n) {
+        JSExportEntry* me = &m->export_entries[n];
+        if (me->export_name == atom && me->export_type == JS_EXPORT_TYPE_LOCAL /*???*/) {
+            return JS_DupValue(ctx, me->u.local.var_ref->value);
+        }
+    }
+    return JS_UNDEFINED;
+}
+
+int JS_GetModuleExportCount(JSContext* ctx, JSModuleDef* m) {
+    return m->export_entries_count;
+}
+
+JSValue JS_GetModuleExportItemUint32(JSContext* ctx, JSModuleDef* m, uint32_t idx) {
+    if (idx >= 0 && idx < m->export_entries_count) {
+        JSExportEntry* me = &m->export_entries[idx];
+        if (me->export_type == JS_EXPORT_TYPE_LOCAL /*???*/) {
+            return JS_DupValue(ctx, me->u.local.var_ref->value);
+        }
+    }
+    return JS_UNDEFINED;
+}
+
+JSAtom JS_GetModuleExportItemName(JSContext* ctx, JSModuleDef* m, uint32_t idx) {
+    if (idx >= 0 && idx < m->export_entries_count) {
+        JSExportEntry* me = &m->export_entries[idx];
+        if (me->export_type == JS_EXPORT_TYPE_LOCAL /*???*/) {
+            return JS_DupAtom(ctx, me->export_name);
+        }
+    }
+    return JS_ATOM_NULL;
+}
+
+JS_BOOL JS_IsInteger(JSContext* ctx, JSValueConst val) {
+    int ret = JS_NumberIsInteger(ctx, val);
+    return ret == -1 ? FALSE : ret;
+}
+
+int JS_GetPropertyLength(JSContext* ctx, int64_t* pres, JSValueConst obj) {
+    return js_get_length64(ctx, pres, obj);
+}
+
+/* return -1 if exception (proxy case) or TRUE/FALSE */
+int JS_IsObjectPlain(JSContext* ctx, JSValueConst val) {
+    JSObject* p;
+    if (JS_VALUE_GET_TAG(val) == JS_TAG_OBJECT) {
+        p = JS_VALUE_GET_OBJ(val);
+        if (unlikely(p->class_id == JS_CLASS_PROXY))
+            return !JS_IsArray(ctx, val);
+        else
+            return p->class_id == JS_CLASS_OBJECT;
+    } else {
+        return FALSE;
+    }
+}
+
+JSModuleDef* JS_FindModule(JSContext* ctx, JSAtom name) {
+    return js_find_loaded_module(ctx, name);
+}
+
+JS_BOOL JS_SealObject(JSContext* ctx, JSValue obj) {
+    JSValue value = js_object_seal(ctx, JS_UNDEFINED, 1, &obj, 0);
+    int result = JS_IsException(value) ? FALSE : TRUE;
+    JS_FreeValue(ctx, value);
+    return result;
+}
+
+JS_BOOL JS_FreezeObject(JSContext* ctx, JSValue obj) {
+    JSValue value = js_object_seal(ctx, JS_UNDEFINED, 1, &obj, 1);
+    int result = JS_IsException(value) ? FALSE : TRUE;
+    JS_FreeValue(ctx, value);
+    return result;
 }

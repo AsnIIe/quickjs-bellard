@@ -674,13 +674,6 @@ JSValue __js_printf_like(2, 3) JS_ThrowRangeError(JSContext *ctx, const char *fm
 JSValue __js_printf_like(2, 3) JS_ThrowInternalError(JSContext *ctx, const char *fmt, ...);
 JSValue JS_ThrowOutOfMemory(JSContext *ctx);
 
-/*Note: for save and recover stack frame*/
-typedef struct JSRuntimeStackSnapshot {
-    char data[64];
-} JSRuntimeStackSnapshot;
-void JS_StackSnapshot(JSRuntime* rt, JSRuntimeStackSnapshot* state);
-void JS_RecoverySnapshot(JSRuntime* rt, const JSRuntimeStackSnapshot* state);
-
 void __JS_FreeValue(JSContext *ctx, JSValue v);
 static inline void JS_FreeValue(JSContext *ctx, JSValue v)
 {
@@ -1249,6 +1242,47 @@ void JS_PrintValueRT(JSRuntime *rt, JSPrintValueWrite *write_func, void *write_o
                      JSValueConst val, const JSPrintValueOptions *options);
 void JS_PrintValue(JSContext *ctx, JSPrintValueWrite *write_func, void *write_opaque,
                    JSValueConst val, const JSPrintValueOptions *options);
+
+/*The following is the extension function, add by zenx*/
+
+/*Note: for save and recover stack frame*/
+typedef struct JSRuntimeStackSnapshot {
+    char data[64];
+} JSRuntimeStackSnapshot;
+void JS_StackSnapshot(JSRuntime* rt, JSRuntimeStackSnapshot* state);
+void JS_RecoverySnapshot(JSRuntime* rt, const JSRuntimeStackSnapshot* state);
+
+JS_BOOL JS_IsDate(JSContext* ctx, JSValueConst obj, double* ms_since_1970);
+
+JSValue JS_GetClassConstructor(JSContext* ctx, JSClassID class_id);
+JSAtom JS_GetClassName(JSRuntime* rt, JSClassID class_id);
+
+JSValue JS_GetModuleExportItem(JSContext* ctx, JSModuleDef* m, JSAtom atom);
+static inline JSValue JS_GetModuleExportItemStr(JSContext* ctx, JSModuleDef* m, const char* name) {
+    JSAtom atom = JS_NewAtom(ctx, name);
+    JSValue rv = JS_GetModuleExportItem(ctx, m, atom);
+    JS_FreeAtom(ctx, atom);
+    return rv;
+}
+JSValue JS_GetModuleExportItemUint32(JSContext* ctx, JSModuleDef* m, uint32_t idx);
+
+int JS_GetModuleExportCount(JSContext* ctx, JSModuleDef* m);
+JSAtom JS_GetModuleExportItemName(JSContext* ctx, JSModuleDef* m, uint32_t idx);
+
+JS_BOOL JS_IsInteger(JSContext* ctx, JSValueConst val);
+#define JS_IsInt(ctx, val) JS_IsInteger(ctx, val)
+
+/* get .length property */
+int JS_GetPropertyLength(JSContext* ctx, int64_t* plength, JSValueConst obj);
+
+/* plain JS object, that is not function nor array nor anything else */
+int JS_IsObjectPlain(JSContext* ctx, JSValueConst val);
+
+/* find the loaded module by name, return NULL if module is not loaded */
+JSModuleDef* JS_FindModule(JSContext* ctx, JSAtom name);
+
+JS_BOOL JS_SealObject(JSContext* ctx, JSValue obj);
+JS_BOOL JS_FreezeObject(JSContext* ctx, JSValue obj);
 
 #undef js_unlikely
 #undef js_force_inline
