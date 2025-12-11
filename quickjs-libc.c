@@ -3524,7 +3524,7 @@ typedef struct {
     uint64_t buf[0];
 } JSSABHeader;
 
-static JSClassID js_worker_class_id;
+JSClassID js_worker_class_id;
 static JSContext *(*js_worker_new_context_func)(JSRuntime *rt);
 
 static int atomic_add_int(int *ptr, int v)
@@ -4055,39 +4055,46 @@ static const JSCFunctionListEntry js_os_funcs[] = {
 #endif
 };
 
+#ifdef USE_WORKER
+static JSValue js_os_create_Worker_class(JSContext* ctx) {
+    if (JS_IsRegisteredClass(JS_GetRuntime(ctx), js_worker_class_id)) {
+        return JS_GetClassConstructor(ctx, js_worker_class_id);
+    }
+    
+    JSRuntime* rt = JS_GetRuntime(ctx);
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSValue proto, obj;
+    /* Worker class */
+    JS_NewClassID(&js_worker_class_id);
+    JS_NewClass(JS_GetRuntime(ctx), js_worker_class_id, &js_worker_class);
+    proto = JS_NewObject(ctx);
+    JS_SetPropertyFunctionList(ctx, proto, js_worker_proto_funcs, countof(js_worker_proto_funcs));
+
+    obj = JS_NewCFunction2(ctx, js_worker_ctor, "Worker", 1,
+                           JS_CFUNC_constructor, 0);
+    JS_SetConstructor(ctx, obj, proto);
+
+    JS_SetClassProto(ctx, js_worker_class_id, proto);
+
+    /* set 'globalThis.self' if necessary */
+    if (ts->recv_pipe && ts->send_pipe) {
+        JSValue global_obj = JS_UNDEFINED;
+        global_obj = JS_GetGlobalObject(ctx);
+        JS_DefinePropertyValueStr(ctx, global_obj, "self",
+                                  js_worker_ctor_internal(ctx, JS_UNDEFINED, ts->recv_pipe, ts->send_pipe),
+                                  JS_PROP_C_W_E);
+        JS_FreeValue(ctx, global_obj);
+    }
+    return obj;
+}
+#endif /* USE_WORKER */
+
 static int js_os_init(JSContext *ctx, JSModuleDef *m)
 {
     os_poll_func = js_os_poll;
 
 #ifdef USE_WORKER
-    {
-        JSRuntime *rt = JS_GetRuntime(ctx);
-        JSThreadState *ts = JS_GetRuntimeOpaque(rt);
-        JSValue proto, obj;
-        /* Worker class */
-        JS_NewClassID(&js_worker_class_id);
-        JS_NewClass(JS_GetRuntime(ctx), js_worker_class_id, &js_worker_class);
-        proto = JS_NewObject(ctx);
-        JS_SetPropertyFunctionList(ctx, proto, js_worker_proto_funcs, countof(js_worker_proto_funcs));
-
-        obj = JS_NewCFunction2(ctx, js_worker_ctor, "Worker", 1,
-                               JS_CFUNC_constructor, 0);
-        JS_SetConstructor(ctx, obj, proto);
-
-        JS_SetClassProto(ctx, js_worker_class_id, proto);
-
-        /* set 'globalThis.self' if necessary */
-        if (ts->recv_pipe && ts->send_pipe) {
-            JSValue global_obj = JS_UNDEFINED;
-            global_obj = JS_GetGlobalObject(ctx);
-
-            JS_DefinePropertyValueStr(ctx, global_obj, "self",
-                                      js_worker_ctor_internal(ctx, JS_UNDEFINED, ts->recv_pipe, ts->send_pipe),
-                                      JS_PROP_C_W_E);
-        }
-
-        JS_SetModuleExport(ctx, m, "Worker", obj);
-    }
+    JS_SetModuleExport(ctx, m, "Worker", js_os_create_Worker_class(ctx));
 #endif /* USE_WORKER */
 
     return JS_SetModuleExportList(ctx, m, js_os_funcs,
@@ -4184,6 +4191,10 @@ void js_std_add_helpers(JSContext *ctx, int argc, char **argv)
                       JS_NewCFunction(ctx, js_os_clearTimeout, "clearTimeout", 1));
     JS_SetPropertyStr(ctx, global_obj, "clearInterval",
                       JS_NewCFunction(ctx, js_os_clearTimeout, "clearInterval", 1));
+
+#ifdef USE_WORKER
+    JS_SetPropertyStr(ctx, global_obj, "Worker", js_os_create_Worker_class(ctx));
+#endif /* USE_WORKER */
 
     JS_FreeValue(ctx, global_obj);
 }
