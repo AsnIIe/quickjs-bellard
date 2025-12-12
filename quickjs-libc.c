@@ -3942,8 +3942,24 @@ static JSValue js_worker_get_onmessage(JSContext *ctx, JSValueConst this_val)
     }
 }
 
+static JSValue js_worker_terminate(JSContext* ctx, JSValueConst this_val,
+                                   int argc, JSValueConst* argv) {
+    JSRuntime* rt = JS_GetRuntime(ctx);
+    JSWorkerData* worker = JS_GetOpaque2(ctx, this_val, js_worker_class_id);
+    JSWorkerMessageHandler* port;
+    if (!worker)
+        return JS_EXCEPTION;
+    port = worker->msg_handler;
+    if (port) {
+        js_free_port(rt, port);
+        worker->msg_handler = NULL;
+    }
+    return JS_UNDEFINED;
+}
+
 static const JSCFunctionListEntry js_worker_proto_funcs[] = {
     JS_CFUNC_DEF("postMessage", 1, js_worker_postMessage ),
+    JS_CFUNC_DEF("terminate", 0, js_worker_terminate ),
     JS_CGETSET_DEF("onmessage", js_worker_get_onmessage, js_worker_set_onmessage ),
 };
 
