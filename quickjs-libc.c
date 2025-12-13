@@ -4137,7 +4137,10 @@ static JSValue js_print(JSContext *ctx, JSValueConst this_val,
 {
     int i;
     JSValueConst v;
-    
+#if defined(_WIN32)
+    if (GetConsoleOutputCP() != CP_UTF8)
+        SetConsoleOutputCP(CP_UTF8);
+#endif
     for(i = 0; i < argc; i++) {
         if (i != 0)
             putchar(' ');
