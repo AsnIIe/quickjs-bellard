@@ -35,8 +35,91 @@ static inline char* JS_DupCStringRT(JSRuntime* rt, const char* str) {
 	return ret ? strcpy(ret, str) : NULL;
 }
 
-/*Note : Convert the str of default system encoding to UTF8 and return JS_NewString*/
+static inline BOOL JS_IsValidUtf8(const char* str) {
+	const unsigned char* unsigned_str = (const unsigned char*)str;
+	int offset = 0;
+	while (str[offset] != '\0') {
+		const unsigned char& c1 = unsigned_str[offset + 0];
+		unsigned char c2 = unsigned_str[offset + 1];
+		unsigned char c3 = unsigned_str[offset + 2];
+		unsigned char c4 = unsigned_str[offset + 3];
+
+		//prevent going outside of the string
+		if (c1 == '\0')
+			c2 = c3 = c4 = '\0';
+		else if (c2 == '\0')
+			c3 = c4 = '\0';
+		else if (c3 == '\0')
+			c4 = '\0';
+
+		//size in bytes of the code point
+		int n = 1;
+
+		//See http://www.unicode.org/versions/Unicode6.0.0/ch03.pdf, Table 3-7. Well-Formed UTF-8 Byte Sequences
+		// ## | Code Points         | First Byte | Second Byte | Third Byte | Fourth Byte
+		// #1 | U+0000   - U+007F   | 00 - 7F    |             |            | 
+		// #2 | U+0080   - U+07FF   | C2 - DF    | 80 - BF     |            | 
+		// #3 | U+0800   - U+0FFF   | E0         | A0 - BF     | 80 - BF    | 
+		// #4 | U+1000   - U+CFFF   | E1 - EC    | 80 - BF     | 80 - BF    | 
+		// #5 | U+D000   - U+D7FF   | ED         | 80 - 9F     | 80 - BF    | 
+		// #6 | U+E000   - U+FFFF   | EE - EF    | 80 - BF     | 80 - BF    | 
+		// #7 | U+10000  - U+3FFFF  | F0         | 90 - BF     | 80 - BF    | 80 - BF
+		// #8 | U+40000  - U+FFFFF  | F1 - F3    | 80 - BF     | 80 - BF    | 80 - BF
+		// #9 | U+100000 - U+10FFFF | F4         | 80 - 8F     | 80 - BF    | 80 - BF
+
+		if (c1 <= 0x7F) // #1 | U+0000   - U+007F, (ASCII)
+			n = 1;
+		else if (0xC2 <= c1 && c1 <= 0xDF &&
+				 0x80 <= c2 && c2 <= 0xBF)  // #2 | U+0080   - U+07FF
+			n = 2;
+		else if (0xE0 == c1 &&
+				 0xA0 <= c2 && c2 <= 0xBF &&
+				 0x80 <= c3 && c3 <= 0xBF)  // #3 | U+0800   - U+0FFF
+			n = 3;
+		else if (0xE1 <= c1 && c1 <= 0xEC &&
+				 0x80 <= c2 && c2 <= 0xBF &&
+				 0x80 <= c3 && c3 <= 0xBF)  // #4 | U+1000   - U+CFFF
+			n = 3;
+		else if (0xED == c1 &&
+				 0x80 <= c2 && c2 <= 0x9F &&
+				 0x80 <= c3 && c3 <= 0xBF)  // #5 | U+D000   - U+D7FF
+			n = 3;
+		else if (0xEE <= c1 && c1 <= 0xEF &&
+				 0x80 <= c2 && c2 <= 0xBF &&
+				 0x80 <= c3 && c3 <= 0xBF)  // #6 | U+E000   - U+FFFF
+			n = 3;
+		else if (0xF0 == c1 &&
+				 0x90 <= c2 && c2 <= 0xBF &&
+				 0x80 <= c3 && c3 <= 0xBF &&
+				 0x80 <= c4 && c4 <= 0xBF)  // #7 | U+10000  - U+3FFFF
+			n = 4;
+		else if (0xF1 <= c1 && c1 <= 0xF3 &&
+				 0x80 <= c2 && c2 <= 0xBF &&
+				 0x80 <= c3 && c3 <= 0xBF &&
+				 0x80 <= c4 && c4 <= 0xBF)  // #8 | U+40000  - U+FFFFF
+			n = 4;
+		else if (0xF4 == c1 &&
+				 0x80 <= c2 && c2 <= 0xBF &&
+				 0x80 <= c3 && c3 <= 0xBF &&
+				 0x80 <= c4 && c4 <= 0xBF)  // #7 | U+10000  - U+3FFFF
+			n = 4;
+		else
+			return FALSE; // invalid UTF-8 sequence
+
+		  //next code point
+		offset += n;
+	}
+	return TRUE;
+}
+
+/*Note : Auto convert the str of default system encoding to UTF8 and return JS_NewString*/
 static inline JSValue JS_NewStringA(JSContext* ctx, const char* str) {
+	if (!str) {
+		return JS_EXCEPTION;
+	}
+	if (JS_IsValidUtf8(str)) {
+		return JS_NewString(ctx, str);
+	}
 #if defined(_WIN32)
 	int utf8_len = 0;
 	wchar_t* wide_buffer = NULL;
@@ -79,16 +162,19 @@ static inline JSValue JS_NewStringA(JSContext* ctx, const char* str) {
 #endif
 }
 
-/*Note : Invoke JS_ToCString and convert UTF8 str to default system encoding */
+/*Note : Invoke JS_ToCString and auto convert UTF8 str to default system encoding */
 static inline const char* JS_ToCStringA(JSContext* ctx, JSValue val) {
-#if defined(_WIN32)
 	const char* content = JS_ToCString(ctx, val);
+	if (!content || !JS_IsValidUtf8(content)) {
+		return content;
+	}
+#if defined(_WIN32)
 	char* acp_str = NULL;
 	wchar_t* wide_buffer = NULL;
 	int wide_len = 0;
 	int utf8_len = 0;
 
-	wide_len = MultiByteToWideChar(CP_ACP, 0, content, -1, NULL, 0);
+	wide_len = MultiByteToWideChar(CP_UTF8, 0, content, -1, NULL, 0);
 	if (wide_len <= 0) {
 		return NULL;
 	}
@@ -96,13 +182,13 @@ static inline const char* JS_ToCStringA(JSContext* ctx, JSValue val) {
 	if (!wide_buffer) {
 		return NULL;
 	}
-	if (MultiByteToWideChar(CP_ACP, 0, content, -1, wide_buffer, wide_len) == 0) {
+	if (MultiByteToWideChar(CP_UTF8, 0, content, -1, wide_buffer, wide_len) == 0) {
 		free(wide_buffer);
 		return NULL;
 	}
 	JS_FreeCString(ctx, content);
 
-	utf8_len = WideCharToMultiByte(CP_UTF8, 0, wide_buffer, -1, NULL, 0, NULL, NULL);
+	utf8_len = WideCharToMultiByte(CP_ACP, 0, wide_buffer, -1, NULL, 0, NULL, NULL);
 	if (utf8_len <= 0) {
 		free(wide_buffer);
 		return NULL;
@@ -112,7 +198,7 @@ static inline const char* JS_ToCStringA(JSContext* ctx, JSValue val) {
 		free(wide_buffer);
 		return NULL;
 	}
-	if (WideCharToMultiByte(CP_UTF8, 0, wide_buffer, -1, acp_str, utf8_len, NULL, NULL) == 0) {
+	if (WideCharToMultiByte(CP_ACP, 0, wide_buffer, -1, acp_str, utf8_len, NULL, NULL) == 0) {
 		free(wide_buffer);
 		JS_Free(ctx, acp_str);
 		return NULL;
@@ -122,7 +208,7 @@ static inline const char* JS_ToCStringA(JSContext* ctx, JSValue val) {
 #else
 #error "other types of compilers are not supported yet";
 #endif
-}
+	}
 
 /*Note : Invoke JS_Free */
 static inline void JS_FreeCStringA(JSContext* ctx, const char* str) {
