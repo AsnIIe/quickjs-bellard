@@ -32,3 +32,4 @@ libwinpthread*.dll
 /build/
 /libs
 /thirdparty/libs
+/examples/main.cpp

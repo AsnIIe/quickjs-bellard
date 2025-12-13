@@ -78,6 +78,8 @@ project "libruntime"
 		"quickjs-opcode.h",
 		"dtoa.h",
 
+		"quickjspp.h",
+
 		"platform/dirent.h",
 		"platform/getopt.h",
 		"platform/libraryloader.h",
@@ -107,6 +109,8 @@ project "libquickjs"
 		"list.h",
 		"quickjs-opcode.h",
 		"dtoa.h",
+
+		"quickjspp.h",
 
 		"platform/dirent.h",
 		"platform/getopt.h",
