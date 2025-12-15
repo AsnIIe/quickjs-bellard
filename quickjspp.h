@@ -208,7 +208,7 @@ static inline const char* JS_ToCStringA(JSContext* ctx, JSValue val) {
 #else
 #error "other types of compilers are not supported yet";
 #endif
-	}
+}
 
 /*Note : Invoke JS_Free */
 static inline void JS_FreeCStringA(JSContext* ctx, const char* str) {
@@ -537,14 +537,10 @@ namespace quickjs {
 	public:
 		JSArray() noexcept = delete;
 
-		explicit JSArray(JSContext* ctx)
-			:JSArray(ctx, JS_NewArray(ctx)) {
-		}
-
 		explicit JSArray(JSContext* ctx, JSValue arr)
-			:ctx(ctx), array(arr), iter_begin(ctx), iter_end(ctx) {
-			if (!JS_IsArray(ctx, array) || JS_GetPropertyLength(ctx, &capacity, array) == -1) {
-				throw std::exception("JSArray : not an JSArray");
+			:ctx(ctx), array(JS_DupValue(ctx, arr)), iter_begin(ctx), iter_end(ctx) {
+			if (!ctx || !JS_IsArray(ctx, array) || JS_GetPropertyLength(ctx, &capacity, array) == -1) {
+				throw std::exception("JSArray : not an array");
 			} else {
 				iter_begin = JSArray::Iterator(ctx, array);
 
@@ -581,17 +577,8 @@ namespace quickjs {
 		JSArray& operator=(JSArray&&) = default;
 
 		~JSArray() {
-			if (!JS_IsUndefined(array)) {
+			if (ctx)
 				JS_FreeValue(ctx, array);
-			}
-		}
-
-		JSValue release() noexcept {
-			JSValue arr = array;
-			ctx = nullptr;
-			array = JS_UNDEFINED;
-			capacity = 0;
-			return arr;
 		}
 
 		JSArray::Iterator begin() {
