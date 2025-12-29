@@ -15,16 +15,16 @@
 #define JS_DupCString(ctx, str) js_strdup(ctx, str)
 
 /*Note : use JS_VALUE_GET_TAG(val) == tag */
-#define JS_CHECK_TAG(val, tag) JS_VALUE_GET_TAG(val) == tag
+#define JS_IsArgOf(val, tag) JS_VALUE_GET_TAG(val) == tag
 
 /*Note : check when argc >= idx */
-#define JS_CHECK_PARAMETER_TAG(ctx, argc, argv, tag, idx, fmt, ...)\
+#define JS_ExpectArgTypeThrow(ctx, argc, argv, tag, idx, fmt, ...)\
 	if (argc >= (idx) && JS_VALUE_GET_TAG(argv[(idx-1)]) != tag) {\
 		return JS_ThrowTypeError(ctx, fmt, __VA_ARGS__);\
 	}\
 
 /*Note : when argc < idx or check failed return JS_ThrowTypeError*/
-#define JS_STRICT_PARAMETER_TAG(ctx, argc, argv, tag, idx, fmt, ...)\
+#define JS_RequireArgTypeThrow(ctx, argc, argv, tag, idx, fmt, ...)\
 	if (argc < (idx) || JS_VALUE_GET_TAG(argv[(idx-1)]) != tag) {\
 		return JS_ThrowTypeError(ctx, fmt, __VA_ARGS__);\
 	}\
@@ -235,7 +235,7 @@ namespace quickjs {
 		}
 		return true;
 	}
-
+	
 	class JSValueRef {
 	public:
 		JSValueRef() noexcept = default;
