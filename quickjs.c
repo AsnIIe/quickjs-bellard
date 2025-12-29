@@ -7940,7 +7940,12 @@ JSValue JS_GetPropertyInternal(JSContext *ctx, JSValueConst obj,
                         /* Note: if 'p' is a prototype, it can be
                            freed in the called function */
                         obj1 = JS_DupValue(ctx, JS_MKPTR(JS_TAG_OBJECT, p));
-                        retval = em->get_property(ctx, obj1, prop, this_obj);
+                        JS_BOOL skip = FALSE;
+                        retval = em->get_property(ctx, obj1, prop, this_obj, &skip);
+                        JS_FreeValue(ctx, obj1);
+                        if (!skip) {
+                            return retval;
+                        }
                         JS_FreeValue(ctx, obj1);
                         return retval;
                     }
@@ -8583,7 +8588,8 @@ int JS_HasProperty(JSContext *ctx, JSValueConst obj, JSAtom prop)
                 obj1 = JS_DupValue(ctx, JS_MKPTR(JS_TAG_OBJECT, p));
                 ret = em->has_property(ctx, obj1, prop);
                 JS_FreeValue(ctx, obj1);
-                return ret;
+                if (ret != JS_PROCEED_WITH_DEFAULT)
+                    return ret;
             }
         }
         /* JS_GetOwnPropertyInternal can free the prototype */
@@ -9392,13 +9398,18 @@ int JS_SetPropertyInternal(JSContext *ctx, JSValueConst obj,
             } else {
                 const JSClassExoticMethods *em = ctx->rt->class_array[p1->class_id].exotic;
                 if (em) {
-                    JSValue obj1;
+                    JSValue obj1, val1;
                     if (em->set_property) {
                         /* set_property can free the prototype */
                         obj1 = JS_DupValue(ctx, JS_MKPTR(JS_TAG_OBJECT, p1));
+                        val1 = JS_DupValue(ctx, val);
                         ret = em->set_property(ctx, obj1, prop,
-                                               val, this_obj, flags);
+                                               val1, this_obj, flags);
                         JS_FreeValue(ctx, obj1);
+                        JS_FreeValue(ctx, val1);
+                        if (ret == JS_PROCEED_WITH_DEFAULT) {
+                            goto prototype_proceed_with_default;
+                        }
                         JS_FreeValue(ctx, val);
                         return ret;
                     }
@@ -9442,6 +9453,7 @@ int JS_SetPropertyInternal(JSContext *ctx, JSValueConst obj,
                 }
             }
         }
+    prototype_proceed_with_default:
         p1 = p1->shape->proto;
     prototype_lookup:
         if (!p1)
@@ -9801,8 +9813,10 @@ static int JS_CreateProperty(JSContext *ctx, JSObject *p,
             const JSClassExoticMethods *em = ctx->rt->class_array[p->class_id].exotic;
             if (em) {
                 if (em->define_own_property) {
-                    return em->define_own_property(ctx, JS_MKPTR(JS_TAG_OBJECT, p),
+                    int r = em->define_own_property(ctx, JS_MKPTR(JS_TAG_OBJECT, p),
                                                    prop, val, getter, setter, flags);
+                    if (r != JS_PROCEED_WITH_DEFAULT)
+                        return r;
                 }
                 ret = JS_IsExtensible(ctx, JS_MKPTR(JS_TAG_OBJECT, p));
                 if (ret < 0)

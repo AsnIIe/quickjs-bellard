@@ -476,6 +476,8 @@ typedef struct JSPropertyDescriptor {
     JSValue setter;
 } JSPropertyDescriptor;
 
+#define JS_PROCEED_WITH_DEFAULT INT_MAX
+
 typedef struct JSClassExoticMethods {
     /* Return -1 if exception (can only happen in case of Proxy object),
        FALSE if the property does not exists, TRUE if it exists. If 1 is
@@ -497,11 +499,11 @@ typedef struct JSClassExoticMethods {
                                int flags);
     /* The following methods can be emulated with the previous ones,
        so they are usually not needed */
-    /* return < 0 if exception or TRUE/FALSE */
+    /* return < 0 if exception or TRUE/FALSE or JS_PROCEED_WITH_DEFAULT*/
     int (*has_property)(JSContext *ctx, JSValueConst obj, JSAtom atom);
     JSValue (*get_property)(JSContext *ctx, JSValueConst obj, JSAtom atom,
-                            JSValueConst receiver);
-    /* return < 0 if exception or TRUE/FALSE */
+                            JSValueConst receiver, JS_BOOL* skip);//Proceed with default is skip is TRUE
+    /* return < 0 if exception or TRUE/FALSE or JS_PROCEED_WITH_DEFAULT*/
     int (*set_property)(JSContext *ctx, JSValueConst obj, JSAtom atom,
                         JSValueConst value, JSValueConst receiver, int flags);
 
