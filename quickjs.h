@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -241,12 +242,38 @@ typedef struct JSValue {
 #define JS_VALUE_GET_SHORT_BIG_INT(v) ((v).u.short_big_int)
 #define JS_VALUE_GET_PTR(v) ((v).u.ptr)
 
+#if !defined(__cplusplus)
 #define JS_MKVAL(tag, val) (JSValue){ (JSValueUnion){ .int32 = val }, tag }
 #define JS_MKPTR(tag, p) (JSValue){ (JSValueUnion){ .ptr = p }, tag }
 
 #define JS_TAG_IS_FLOAT64(tag) ((unsigned)(tag) == JS_TAG_FLOAT64)
 
 #define JS_NAN (JSValue){ .u.float64 = JS_FLOAT64_NAN, JS_TAG_FLOAT64 }
+#else
+static inline JSValue JS_MKVAL(int64_t tag, int32_t val) {
+    JSValue v = {};
+    v.tag = tag;
+    v.u.int32 = val;
+    return v;
+}
+
+static inline JSValue JS_MKPTR(int64_t tag, void* p) {
+    JSValue v = {};
+    v.tag = tag;
+    v.u.ptr = p;
+    return v;
+}
+
+#define JS_TAG_IS_FLOAT64(tag) ((unsigned)(tag) == JS_TAG_FLOAT64)
+
+static inline JSValue JS_NAN() {
+    JSValue v = {};
+    v.tag = JS_TAG_FLOAT64;
+    v.u.float64 = JS_FLOAT64_NAN;
+    return v;
+}
+#define JS_NAN JS_NAN()
+#endif
 
 static inline JSValue __JS_NewFloat64(JSContext *ctx, double d)
 {
@@ -703,7 +730,7 @@ static inline JSValue JS_DupValue(JSContext *ctx, JSValueConst v)
         JSRefCountHeader *p = (JSRefCountHeader *)JS_VALUE_GET_PTR(v);
         p->ref_count++;
     }
-    return (JSValue)v;
+    return v;
 }
 
 static inline JSValue JS_DupValueRT(JSRuntime *rt, JSValueConst v)
@@ -712,7 +739,7 @@ static inline JSValue JS_DupValueRT(JSRuntime *rt, JSValueConst v)
         JSRefCountHeader *p = (JSRefCountHeader *)JS_VALUE_GET_PTR(v);
         p->ref_count++;
     }
-    return (JSValue)v;
+    return v;
 }
 
 JS_BOOL JS_StrictEq(JSContext *ctx, JSValueConst op1, JSValueConst op2);
@@ -1363,6 +1390,16 @@ JS_BOOL JS_FreezeObject(JSContext* ctx, JSValue obj);
 
 #ifdef __cplusplus
 } /* extern "C" { */
+#endif
+
+#if defined(__cplusplus) && !defined(JS_NAN_BOXING)
+bool operator==(const ::JSValue& v1, const ::JSValue& v2) {
+    return memcmp(&v1, &v2, sizeof(JSValue)) == 0;
+}
+
+bool operator!=(const ::JSValue& v1, const ::JSValue& v2) {
+    return !(v1 == v2);
+}
 #endif
 
 #endif /* QUICKJS_H */
