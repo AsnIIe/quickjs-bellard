@@ -15,7 +15,7 @@
 #define JS_DupCString(ctx, str) js_strdup(ctx, str)
 
 /*Note : use JS_VALUE_GET_TAG(val) == tag */
-#define JS_IsArgOf(val, tag) JS_VALUE_GET_TAG(val) == tag
+#define JS_IsArgOf(val, tag) (JS_VALUE_GET_TAG(val) == tag)
 
 /*Note : check when argc >= idx */
 #define JS_ExpectArgTypeThrow(ctx, argc, argv, tag, idx, fmt, ...)\
@@ -215,6 +215,7 @@ static inline void JS_FreeCStringA(JSContext* ctx, const char* str) {
 
 #if defined(__cplusplus)
 #include <iostream>
+#include <functional>
 
 namespace quickjs {
 	/*Note : Match the TAG of parameters */
@@ -233,6 +234,42 @@ namespace quickjs {
 		return true;
 	}
 	
+	typedef std::function<void(JSValue&, JSValue&, const size_t&)> Iterator;
+	/*Note : Traverse JSArray or JSObject, Callback(key, value, index), return property size or < 0 */
+	static inline size_t for_each(JSContext* ctx, JSValue v, quickjs::Iterator iter) {
+		if (!JS_IsArray(ctx, v) && !JS_IsObject(v)) {
+			return -1;
+		}
+		if (JS_IsArray(ctx, v)) {
+			int64_t len = 0;
+			JS_GetPropertyLength(ctx, &len, v);
+			for (size_t i = 0; i < len; i++) {
+				JSValue key = JS_NewInt32(ctx, i);
+				JSValue value = JS_GetPropertyUint32(ctx, v, i);
+				iter(key, value, i);
+				JS_FreeValue(ctx, key);
+				JS_FreeValue(ctx, value);
+			}
+			return len;
+		} else {
+			uint32_t len = 0;
+			JSPropertyEnum* tab;
+			if (JS_GetOwnPropertyNames(ctx, &tab, &len, v,
+									   JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) < 0) {
+				return -2;
+			}
+			for (int i = 0; i < len; i++) {
+				JSValue key = JS_AtomToString(ctx, tab[i].atom);
+				JSValue value = JS_GetProperty(ctx, v, tab[i].atom);
+				iter(key, value, i);
+				JS_FreeValue(ctx, key);
+				JS_FreeValue(ctx, value);
+			}
+			JS_FreePropertyEnum(ctx, tab, len);
+			return len;
+		}
+	}
+
 	class JSValueRef {
 	public:
 		JSValueRef() noexcept = default;
@@ -332,6 +369,10 @@ namespace quickjs {
 
 		explicit JSCString(JSContext* ctx, JSValue val)
 			:mCtx(ctx), mCstr(character.unwrap(ctx, val)) {
+		}
+
+		explicit JSCString(JSContext* ctx, JSAtom atom)
+			:mCtx(ctx), mCstr(character.wrap(ctx, *quickjs::JSValueRef(ctx, JS_AtomToValue(ctx, atom)))) {
 		}
 
 		JSCString(const JSCString& JsCstr) = delete;
