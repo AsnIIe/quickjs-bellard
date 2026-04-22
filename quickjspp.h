@@ -233,7 +233,7 @@ namespace quickjs {
 		}
 		return true;
 	}
-	
+
 	typedef std::function<void(JSValue&, JSValue&, const size_t&)> Iterator;
 	/*Note : Traverse JSArray or JSObject, Callback(key, value, index), return property size or < 0 */
 	static inline size_t for_each(JSContext* ctx, JSValue v, quickjs::Iterator iter) {
@@ -361,29 +361,29 @@ namespace quickjs {
 	using DefaultCharacter = quickjs::JSCStringCharacter::DefaultJSCStringCharacter;
 	/*convert UTF8 to the default system encoding*/
 	using SystemCharacter = quickjs::JSCStringCharacter::DefaultJSCStringSystemCharacter;
-
+	
 	template<typename Character = quickjs::DefaultCharacter>
-	class JSCString {
+	class JSCStringRef {
 	public:
-		JSCString() noexcept = default;
+		JSCStringRef() noexcept = default;
 
-		explicit JSCString(JSContext* ctx, JSValue val)
+		explicit JSCStringRef(JSContext* ctx, JSValue val)
 			:mCtx(ctx), mCstr(character.unwrap(ctx, val)) {
 		}
 
-		explicit JSCString(JSContext* ctx, JSAtom atom)
+		explicit JSCStringRef(JSContext* ctx, JSAtom atom)
 			:mCtx(ctx), mCstr(character.wrap(ctx, *quickjs::JSValueRef(ctx, JS_AtomToValue(ctx, atom)))) {
 		}
 
-		JSCString(const JSCString& JsCstr) = delete;
+		JSCStringRef(const JSCStringRef& JsCstr) = delete;
 
-		JSCString(JSCString&& JsCstr) noexcept
+		JSCStringRef(JSCStringRef&& JsCstr) noexcept
 			: mCstr(JsCstr.mCstr), mCtx(JsCstr.mCtx) {
 			JsCstr.mCtx = nullptr;
 			JsCstr.mCstr = nullptr;
 		}
 
-		~JSCString() {
+		~JSCStringRef() {
 			if (mCtx && mCstr) {
 				character.release(mCtx, mCstr);
 			}
@@ -391,9 +391,9 @@ namespace quickjs {
 			mCstr = nullptr;
 		}
 
-		JSCString& operator=(const JSCString& JsCstr) = delete;
+		JSCStringRef& operator=(const JSCStringRef& JsCstr) = delete;
 
-		JSCString& operator=(JSCString&& JsCstr) noexcept {
+		JSCStringRef& operator=(JSCStringRef&& JsCstr) noexcept {
 			reset(JsCstr.mCtx, JsCstr.mCstr);
 			JsCstr.mCtx = nullptr;
 			JsCstr.mCstr = nullptr;
@@ -432,6 +432,10 @@ namespace quickjs {
 		JSContext* mCtx = nullptr;
 		Character character;
 	};
+
+	using JSCString = JSCStringRef<DefaultCharacter>;
+	/*convert UTF8 to the default system encoding*/
+	using JSCStringA = JSCStringRef<SystemCharacter>;
 }
 #endif //__cplusplus
 
