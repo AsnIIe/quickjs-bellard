@@ -478,10 +478,6 @@ namespace quickjs {
 			return ref;
 		}
 
-		explicit operator bool() const noexcept {
-			return ref != JS_UNDEFINED;
-		}
-
 		JSValue release() noexcept {
 			ctx = nullptr;
 			argument_idx = -1;
