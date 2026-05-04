@@ -1,4 +1,4 @@
-﻿LIBRARY
+LIBRARY
 
 EXPORTS
 JS_AddIntrinsicBaseObjects
@@ -230,3 +230,4 @@ JS_IsObjectPlain
 JS_FindModule
 JS_SealObject
 JS_FreezeObject
+JS_GetOpaque3

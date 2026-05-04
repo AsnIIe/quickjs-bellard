@@ -1385,6 +1385,9 @@ JSModuleDef* JS_FindModule(JSContext* ctx, JSAtom name);
 JS_BOOL JS_SealObject(JSContext* ctx, JSValue obj);
 JS_BOOL JS_FreezeObject(JSContext* ctx, JSValue obj);
 
+/* get opaque from prototype chain, return NULL in case of Proxy object or Primitive object. class_id can be zero*/
+void* JS_GetOpaque3(JSValueConst obj, JSClassID class_id);
+
 #undef js_unlikely
 #undef js_force_inline
 

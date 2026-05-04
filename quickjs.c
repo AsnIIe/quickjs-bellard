@@ -59729,3 +59729,23 @@ JS_BOOL JS_FreezeObject(JSContext* ctx, JSValue obj) {
     JS_FreeValue(ctx, value);
     return result;
 }
+
+/* get opaque from the prototype chain */
+void* JS_GetOpaque3(JSValueConst obj, JSClassID class_id) {
+    if (JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT) {
+        JSObject* p;
+        p = JS_VALUE_GET_OBJ(obj);
+        if (p->class_id != JS_CLASS_PROXY) {
+            if (class_id != JS_INVALID_CLASS_ID && p->class_id == class_id)
+                return p->u.opaque;
+            if (class_id == JS_INVALID_CLASS_ID && p->u.opaque)
+                return p->u.opaque;
+            // lookup proto chain
+            p = p->shape->proto;
+            if (p) {
+                return JS_GetOpaque3(JS_MKPTR(JS_TAG_OBJECT, p), class_id);
+            }
+        }
+    }
+    return NULL;
+}

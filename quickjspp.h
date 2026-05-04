@@ -367,7 +367,7 @@ namespace quickjs {
 		explicit JSCStringRef(JSContext* ctx, JSAtom atom) {
 			ctx = ctx;
 			JSValue v = JS_AtomToValue(ctx, atom);
-			string = character.wrap(ctx, v);
+			string = character.unwrap(ctx, v);
 			JS_FreeValue(ctx, v);
 		}
 
@@ -497,6 +497,76 @@ namespace quickjs {
 			argument_idx = arg_idx;
 		}
 
+		operator int() const {
+			return value<int>();
+		}
+
+		operator size_t() const {
+			return value<size_t>();
+		}
+
+		operator double() const {
+			return value<double>();
+		}
+
+		operator float() const {
+			return value<float>();
+		}
+
+		operator bool() const {
+			return value<bool>();
+		}
+
+		operator std::string() const {
+			return value<std::string>();
+		}
+
+		operator quickjs::JSCString() const {
+			return value<quickjs::JSCString>();
+		}
+
+		operator quickjs::JSCStringA() const {
+			return value<quickjs::JSCStringA>();
+		}
+
+		//Note: If is object
+		quickjs::JSValueRef operator[](std::string key) const {
+			return operator[](key.c_str());
+		}
+
+		//Note: If is object
+		quickjs::JSValueRef operator[](const char* key) const {
+			return operator[](const_cast<char*>(key));
+		}
+
+		//Note: If is object
+		quickjs::JSValueRef operator[](char* key) const {
+			if (!is<JSType::object>()) {
+				throw quickjs::type_error("object is required", argument_idx);
+			}
+			return quickjs::JSValueRef(ctx, JS_GetPropertyStr(ctx, ref, key));
+		}
+
+		//Note: If is array, without verify length
+		quickjs::JSValueRef operator[](size_t idx) const {
+			if (!is<JSType::array>()) {
+				throw quickjs::type_error("array is required", argument_idx);
+			}
+			return quickjs::JSValueRef(ctx, JS_GetPropertyUint32(ctx, ref, idx));
+		}
+
+		//Note: If is array, get property .length
+		size_t length() const {
+			if (!is<JSType::array>()) {
+				throw quickjs::type_error("array is required", argument_idx);
+			}
+			int64_t len;
+			if (JS_GetPropertyLength(ctx, &len, ref) == -1) {
+				throw quickjs::type_error("fail to get .length", argument_idx);
+			}
+			return static_cast<size_t>(len);
+		}
+
 		template<typename T>
 		bool is() const {
 			return false;
@@ -602,10 +672,19 @@ namespace quickjs {
 			if (!is<T>()) {
 				throw quickjs::type_error(quickjs::format_str("%s is required", typeid(T).name()), argument_idx);
 			}
-			if (typeid(int) == typeid(T) || typeid(size_t) == typeid(T)) {
+			if (typeid(int) == typeid(T)) {
 				int val;
-				if (JS_ToInt32(ctx, &val, ref) == -1 || val < 0) {
+				if (JS_ToInt32(ctx, &val, ref) == -1) {
 					throw quickjs::type_error("type conversion error", argument_idx);
+				}
+				return val;
+			} else if (typeid(size_t) == typeid(T)) {
+				int val;
+				if (JS_ToInt32(ctx, &val, ref) == -1) {
+					throw quickjs::type_error("type conversion error", argument_idx);
+				}
+				if (val < 0) {
+					throw quickjs::type_error("positive integer is required", argument_idx);
 				}
 				return static_cast<T>(val);
 			} else if (typeid(double) == typeid(T) || typeid(float) == typeid(T)) {
