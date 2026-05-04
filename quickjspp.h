@@ -17,17 +17,17 @@
 /*Note : use JS_VALUE_GET_TAG(val) == tag */
 #define JS_IsArgOf(val, tag) (JS_VALUE_GET_TAG(val) == tag)
 
-/*Note : check when argc >= idx */
-#define JS_ExpectArgTypeThrow(ctx, argc, argv, tag, idx, fmt, ...)\
-	if (argc >= (idx) && JS_VALUE_GET_TAG(argv[(idx-1)]) != tag) {\
-		return JS_ThrowTypeError(ctx, fmt, __VA_ARGS__);\
-	}\
+/*Note : idx starts from 1, check when argc >= idx or ignore or check failed return JS_ThrowTypeError*/
+#define JS_ExpectArgTypeThrow(ctx, argc, argv, idx, tag, fmt, ...)\
+    if (argc >= (idx) && JS_VALUE_GET_TAG(argv[(idx-1)]) != tag) {\
+        return JS_ThrowTypeError(ctx, fmt, __VA_ARGS__);\
+    }\
 
-/*Note : when argc < idx or check failed return JS_ThrowTypeError*/
-#define JS_RequireArgTypeThrow(ctx, argc, argv, tag, idx, fmt, ...)\
-	if (argc < (idx) || JS_VALUE_GET_TAG(argv[(idx-1)]) != tag) {\
-		return JS_ThrowTypeError(ctx, fmt, __VA_ARGS__);\
-	}\
+/*Note : idx starts from 1, when argc < idx or check failed return JS_ThrowTypeError*/
+#define JS_RequireArgTypeThrow(ctx, argc, argv, idx, tag, fmt, ...)\
+    if (argc < (idx) || JS_VALUE_GET_TAG(argv[(idx-1)]) != tag) {\
+        return JS_ThrowTypeError(ctx, fmt, __VA_ARGS__);\
+    }\
 
 /*Note : The result string allocates memory from the JSRuntime and needs to be released*/
 static inline char* JS_DupCStringRT(JSRuntime* rt, const char* str) {
@@ -106,7 +106,7 @@ static inline BOOL JS_IsValidUtf8(const char* str) {
 		else
 			return FALSE; // invalid UTF-8 sequence
 
-		  //next code point
+		//next code point
 		offset += n;
 	}
 	return TRUE;
@@ -218,74 +218,119 @@ static inline void JS_FreeCStringA(JSContext* ctx, const char* str) {
 #include <functional>
 
 namespace quickjs {
-	class JSValueRef {
+	inline std::string format_str(const char* fmt, ...) {
+		static char buf[2048];
+
+#ifdef _MSC_VER
+#pragma warning(disable : 4996)
+#endif
+		va_list args;
+		va_start(args, fmt);
+		vsnprintf(buf, sizeof(buf), fmt, args);
+		va_end(args);
+#ifdef _MSC_VER
+#pragma warning(default : 4996)
+#endif
+		return std::string(buf);
+	}
+
+	class type_error : public std::exception {
 	public:
-		JSValueRef() noexcept = default;
-
-		explicit JSValueRef(JSRuntime* rt, JSValue val)
-			: mRt(rt), mRef(val) {
+		explicit type_error(const std::string& msg) : msg_(msg), argument_(-1) {
 		}
 
-		explicit JSValueRef(JSContext* ctx, JSValue val)
-			: mRt(JS_GetRuntime(ctx)), mRef(val) {
+		explicit type_error(const std::string& msg, int argument_idx) : msg_(msg), argument_(argument_idx) {
+			if (argument_ >= 0)
+				msg_ = quickjs::format_str("%s at arguments[%d]", msg.c_str(), argument_);
 		}
 
-		JSValueRef(const JSValueRef& valueRef) = delete;
-
-		JSValueRef(JSValueRef&& valueRef) noexcept
-			: mRef(valueRef.mRef), mRt(valueRef.mRt) {
-			valueRef.mRt = nullptr;
-			valueRef.mRef = JS_UNDEFINED;
+		const char* what() const noexcept override {
+			return msg_.c_str();
 		}
 
-		~JSValueRef() {
-			if (mRt && mRef != JS_UNDEFINED) {
-				JS_FreeValueRT(mRt, mRef);
-			}
-			mRt = nullptr;
-			mRef = JS_UNDEFINED;
-		}
-
-		JSValueRef& operator=(const JSValueRef& valueRef) = delete;
-
-		JSValueRef& operator=(JSValueRef&& valueRef) noexcept {
-			reset(valueRef.mRt, valueRef.mRef);
-			valueRef.mRt = nullptr;
-			valueRef.mRef = JS_UNDEFINED;
-			return *this;
-		}
-
-		JSValue get() const noexcept {
-			return mRef;
-		}
-
-		JSValue operator*() const noexcept {
-			return mRef;
-		}
-
-		explicit operator bool() const noexcept {
-			return mRef != JS_UNDEFINED;;
-		}
-
-		JSValue release() noexcept {
-			JSValue tmp = mRef;
-			mRt = nullptr;
-			mRef = JS_UNDEFINED;
-			return tmp;
-		}
-
-		void reset(JSRuntime* rt = nullptr, JSValue val = JS_UNDEFINED) noexcept {
-			if (mRt && mRef != JS_UNDEFINED) {
-				JS_FreeValueRT(mRt, mRef);
-			}
-			mRt = rt;
-			mRef = val;
+		const int argument_idx() const noexcept {
+			return argument_;
 		}
 
 	private:
-		JSValue mRef = JS_UNDEFINED;
-		JSRuntime* mRt = nullptr;
+		std::string msg_;
+		int argument_;
 	};
+
+	template<typename Type>
+	class unique_ptr {
+	public:
+		unique_ptr() noexcept = default;
+
+		explicit unique_ptr(JSRuntime* rt, Type* ptr)
+			: rt(rt), ptref(ptr) {
+		}
+
+		explicit unique_ptr(JSContext* ctx, Type* ptr)
+			: rt(JS_GetRuntime(ctx)), ptref(ptr) {
+		}
+
+		unique_ptr(const unique_ptr& JSPtRef) = delete;
+
+		unique_ptr(unique_ptr&& JSPtRef) noexcept
+			: ptref(JSPtRef.ptref), rt(JSPtRef.rt) {
+			JSPtRef.release();
+		}
+
+		~unique_ptr() {
+			JS_FreeRT(rt, ptref);
+			release();
+		}
+
+		unique_ptr& operator=(const unique_ptr& JSPtRef) = delete;
+
+		unique_ptr& operator=(unique_ptr&& JSPtRef) noexcept {
+			reset(JSPtRef.rt, JSPtRef.ptref);
+			JSPtRef.release();
+			return *this;
+		}
+
+		Type* get() const noexcept {
+			return ptref;
+		}
+
+		Type* operator*() const noexcept {
+			return ptref;
+		}
+
+		explicit operator bool() const noexcept {
+			return ptref != nullptr;
+		}
+
+		Type* release() noexcept {
+			rt = nullptr;
+			return std::exchange(ptref, nullptr);
+		}
+
+		void reset(JSRuntime* rt = nullptr, Type* ptr = nullptr) noexcept {
+			JS_FreeRT(rt, ptref);
+			rt = rt;
+			ptref = ptr;
+		}
+
+		void reset(JSContext* ctx = nullptr, Type* ptr = nullptr) noexcept {
+			reset(JS_GetRuntime(ctx), ptr);
+		}
+
+	private:
+		Type* ptref = nullptr;
+		JSRuntime* rt = nullptr;
+	};
+
+	template<typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
+	static inline quickjs::unique_ptr<T> make_unique(JSContext* ctx, size_t size = 1) {
+		return quickjs::unique_ptr<T>(ctx, static_cast<T*>(js_mallocz(ctx, sizeof(T) * size)));
+	}
+	template<typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
+	static inline quickjs::unique_ptr<T> make_unique(JSRuntime* rt, size_t size = 1) {
+		return quickjs::unique_ptr<T>(rt, static_cast<T*>(js_mallocz_rt(rt, sizeof(T) * size)));
+	}
+
 
 	namespace JSCStringCharacter {
 		struct DefaultJSCStringCharacter {
@@ -309,75 +354,73 @@ namespace quickjs {
 	using DefaultCharacter = quickjs::JSCStringCharacter::DefaultJSCStringCharacter;
 	/*convert UTF8 to the default system encoding*/
 	using SystemCharacter = quickjs::JSCStringCharacter::DefaultJSCStringSystemCharacter;
-	
+
 	template<typename Character = quickjs::DefaultCharacter>
 	class JSCStringRef {
 	public:
 		JSCStringRef() noexcept = default;
 
 		explicit JSCStringRef(JSContext* ctx, JSValue val)
-			:mCtx(ctx), mCstr(character.unwrap(ctx, val)) {
+			:ctx(ctx), string(character.unwrap(ctx, val)) {
 		}
 
-		explicit JSCStringRef(JSContext* ctx, JSAtom atom)
-			:mCtx(ctx), mCstr(character.wrap(ctx, *quickjs::JSValueRef(ctx, JS_AtomToValue(ctx, atom)))) {
+		explicit JSCStringRef(JSContext* ctx, JSAtom atom) {
+			ctx = ctx;
+			JSValue v = JS_AtomToValue(ctx, atom);
+			string = character.wrap(ctx, v);
+			JS_FreeValue(ctx, v);
 		}
 
 		JSCStringRef(const JSCStringRef& JsCstr) = delete;
 
 		JSCStringRef(JSCStringRef&& JsCstr) noexcept
-			: mCstr(JsCstr.mCstr), mCtx(JsCstr.mCtx) {
-			JsCstr.mCtx = nullptr;
-			JsCstr.mCstr = nullptr;
+			: string(JsCstr.string), ctx(JsCstr.ctx) {
+			JsCstr.release();
 		}
 
 		~JSCStringRef() {
-			if (mCtx && mCstr) {
-				character.release(mCtx, mCstr);
+			if (ctx && string) {
+				character.release(ctx, string);
 			}
-			mCtx = nullptr;
-			mCstr = nullptr;
+			release();
 		}
 
 		JSCStringRef& operator=(const JSCStringRef& JsCstr) = delete;
 
 		JSCStringRef& operator=(JSCStringRef&& JsCstr) noexcept {
-			reset(JsCstr.mCtx, JsCstr.mCstr);
-			JsCstr.mCtx = nullptr;
-			JsCstr.mCstr = nullptr;
+			reset(JsCstr.ctx, JsCstr.string);
+			JsCstr.release();
 			return *this;
 		}
 
 		const char* get() const noexcept {
-			return mCstr;
+			return string;
 		}
 
 		const char* operator*() const noexcept {
-			return mCstr;
+			return string;
 		}
 
 		explicit operator bool() const noexcept {
-			return mCstr != nullptr;
+			return string != nullptr;
 		}
 
 		const char* release() noexcept {
-			const char* cstr = mCstr;
-			mCtx = nullptr;
-			mCstr = nullptr;
-			return cstr;
+			ctx = nullptr;
+			return std::exchange(string, nullptr);
 		}
 
 		void reset(JSContext* ctx = nullptr, const char* cstr = nullptr) noexcept {
-			if (mCtx && mCstr) {
-				character.release(mCtx, mCstr);
+			if (ctx && string) {
+				character.release(ctx, string);
 			}
-			mCtx = ctx;
-			mCstr = cstr;
+			ctx = ctx;
+			string = cstr;
 		}
 
 	private:
-		const char* mCstr = nullptr;
-		JSContext* mCtx = nullptr;
+		const char* string = nullptr;
+		JSContext* ctx = nullptr;
 		Character character;
 	};
 
@@ -385,25 +428,454 @@ namespace quickjs {
 	/*convert UTF8 to the default system encoding*/
 	using JSCStringA = JSCStringRef<SystemCharacter>;
 
-	/*Note : Match the TAG of parameters */
-	template<typename... Args>
-	static inline bool JS_IsArgsOf(int argc, JSValue* argv, Args... args) {
-		constexpr size_t argsc = sizeof...(args);
-		if (argc != argsc) {
+
+	enum class JSType {
+		object,
+		array,
+		integer,
+		boolean,
+		number,
+		string,
+		null,
+		exception
+	};
+
+	class JSValueRef {
+	public:
+		JSValueRef() noexcept = default;
+
+		explicit JSValueRef(JSContext* ctx, JSValue val, int arg_idx = -1)
+			: ctx(ctx), ref(val), argument_idx(arg_idx) {
+		}
+
+		JSValueRef(const JSValueRef& valueRef) = delete;
+
+		JSValueRef(JSValueRef&& valueRef) noexcept
+			: ref(valueRef.ref), ctx(valueRef.ctx), argument_idx(valueRef.argument_idx) {
+			valueRef.release();
+		}
+
+		~JSValueRef() {
+			if (ctx && ref != JS_UNDEFINED) {
+				JS_FreeValue(ctx, ref);
+			}
+			release();
+		}
+
+		JSValueRef& operator=(const JSValueRef& valueRef) = delete;
+
+		JSValueRef& operator=(JSValueRef&& valueRef) noexcept {
+			reset(valueRef.ctx, valueRef.ref, valueRef.argument_idx);
+			valueRef.release();
+			return *this;
+		}
+
+		JSValue get() const noexcept {
+			return ref;
+		}
+
+		JSValue operator*() const noexcept {
+			return ref;
+		}
+
+		explicit operator bool() const noexcept {
+			return ref != JS_UNDEFINED;
+		}
+
+		JSValue release() noexcept {
+			ctx = nullptr;
+			argument_idx = -1;
+			return std::exchange(ref, JS_UNDEFINED);
+		}
+
+		void reset(JSContext* ctx = nullptr, JSValue val = JS_UNDEFINED, int arg_idx = -1) noexcept {
+			if (ctx && ref != JS_UNDEFINED) {
+				JS_FreeValue(ctx, ref);
+			}
+			ctx = ctx;
+			ref = val;
+			argument_idx = arg_idx;
+		}
+
+		template<typename T>
+		bool is() const {
 			return false;
 		}
-		std::common_type_t<Args...> argsv[] = { args... };
-		for (size_t i = 0; i < argsc; i++) {
-			if (JS_VALUE_GET_TAG(argv[i]) != argsv[i]) {
+
+		template<>
+		bool is<int>() const {
+			return JS_VALUE_GET_TAG(ref) == JS_TAG_INT;
+		}
+
+		template<>
+		bool is<size_t>() const {
+			return is<int>();
+		}
+
+		template<>
+		bool is<bool>() const {
+			return JS_VALUE_GET_TAG(ref) == JS_TAG_BOOL;
+		}
+
+		template<>
+		bool is<const char*>() const {
+			return JS_VALUE_GET_TAG(ref) == JS_TAG_STRING;
+		}
+
+		template<>
+		bool is<char*>() const {
+			return is<const char*>();
+		}
+
+		template<>
+		bool is<std::string>() const {
+			return is<const char*>();
+		}
+
+		template<>
+		bool is<quickjs::JSCStringA>() const {
+			return is<const char*>();
+		}
+
+		template<>
+		bool is<quickjs::JSCString>() const {
+			return is<const char*>();
+		}
+
+		template<>
+		bool is<double>() const {
+			return JS_IsNumber(ref);
+		}
+
+		template<>
+		bool is<float>() const {
+			return JS_IsNumber(ref);
+		}
+
+		template<JSType T>
+		bool is() const {
+			return false;
+		}
+
+		template<>
+		bool is<JSType::integer>() const {
+			return is<int>();
+		}
+
+		template<>
+		bool is<JSType::boolean>() const {
+			return is<bool>();
+		}
+
+		template<>
+		bool is<JSType::number>() const {
+			return is<double>();
+		}
+
+		template<>
+		bool is<JSType::string>() const {
+			return is<const char*>();
+		}
+
+		template<>
+		bool is<JSType::object>() const {
+			return (JS_VALUE_GET_TAG(ref) == JS_TAG_OBJECT) && !JS_IsArray(ctx, ref);
+		}
+
+		template<>
+		bool is<JSType::array>() const {
+			return JS_IsArray(ctx, ref);
+		}
+
+		template<>
+		bool is<JSType::null>() const {
+			return JS_VALUE_GET_TAG(ref) == JS_TAG_NULL;
+		}
+
+		template<>
+		bool is<JSType::exception>() const {
+			return JS_VALUE_GET_TAG(ref) == JS_TAG_EXCEPTION;
+		}
+
+		template<typename T, typename = std::enable_if_t<!std::is_same_v<T, const char*> && !std::is_same_v<T, char*>>>
+		T value() const {
+			if (!is<T>()) {
+				throw quickjs::type_error(quickjs::format_str("%s is required", typeid(T).name()), argument_idx);
+			}
+			if (typeid(int) == typeid(T) || typeid(size_t) == typeid(T)) {
+				int val;
+				if (JS_ToInt32(ctx, &val, ref) == -1 || val < 0) {
+					throw quickjs::type_error("type conversion error", argument_idx);
+				}
+				return static_cast<T>(val);
+			} else if (typeid(double) == typeid(T) || typeid(float) == typeid(T)) {
+				double val;
+				if (JS_ToFloat64(ctx, &val, ref) == -1) {
+					throw quickjs::type_error("type conversion error", argument_idx);
+				}
+				return static_cast<T>(val);
+			} else if (typeid(bool) == typeid(T)) {
+				return JS_ToBool(ctx, ref);
+			}
+			throw quickjs::type_error("type mismatch", argument_idx);
+		}
+
+		template<>
+		std::string value<std::string>() const {
+			if (!is<std::string>()) {
+				throw quickjs::type_error("string is required", argument_idx);
+			}
+			const char* s = JS_ToCString(ctx, ref);
+			std::string val(s);
+			JS_FreeCString(ctx, s);
+			return val;
+		}
+
+		template<>
+		quickjs::JSCString value<quickjs::JSCString>() const {
+			if (!is<JSCString>()) {
+				throw quickjs::type_error("string is required", argument_idx);
+			}
+			return quickjs::JSCString(ctx, ref);
+		}
+
+		template<>
+		quickjs::JSCStringA value<quickjs::JSCStringA>() const {
+			if (!is<JSCStringA>()) {
+				throw quickjs::type_error("string is required", argument_idx);
+			}
+			return quickjs::JSCStringA(ctx, ref);
+		}
+
+		/*Note: If the argument is passed, verify the type. Return the default value if not passed */
+		template<typename T, typename = std::enable_if_t<!std::is_same_v<T, const char*> && !std::is_same_v<T, char*>>>
+		T value(T default_val) const {
+			if (!ctx) {
+				return default_val;
+			} else if (ctx && !is<T>()) {
+				std::string type_name(typeid(T).name());
+				if (typeid(quickjs::JSCString) == typeid(T)
+					|| typeid(quickjs::JSCStringA) == typeid(T)
+					|| typeid(std::string) == typeid(T)) {
+					type_name = "string";
+				}
+				throw quickjs::type_error(quickjs::format_str("%s is required", type_name.c_str()), argument_idx);
+			}
+			return value<T>();
+		}
+
+	private:
+		JSValue ref = JS_UNDEFINED;
+		JSContext* ctx = nullptr;
+		int argument_idx = -1;
+	};
+
+	/*Note : Return quickjs::JSValueRef, Invoke JS_DupValue and save an additional argument index */
+	template<size_t Index>
+	static inline quickjs::JSValueRef dump_argument(JSContext* ctx, int argc, JSValue* argv) {
+		if (Index < argc) {
+			return quickjs::JSValueRef(ctx, JS_DupValue(ctx, argv[Index]), Index);
+		}
+		return quickjs::JSValueRef();
+	}
+
+	class JSArguments {
+	public:
+		explicit JSArguments(JSContext* ctx, int argc, JSValueConst* argv)
+			:ctx_(ctx), argc_(argc), argv_(argv) {
+
+		}
+
+		JSArguments(const JSArguments& arguments) = default;
+		JSArguments(JSArguments&& arguments) = default;
+
+		JSArguments& operator=(const JSArguments& arguments) = default;
+		JSArguments& operator=(JSArguments&& arguments) = default;
+
+		quickjs::JSValueRef operator[](int idx) {
+			if (std::abs(idx) >= size()) {
+				return quickjs::JSValueRef();
+			}
+			if (idx >= 0) {
+				return quickjs::JSValueRef(ctx_, JS_DupValue(ctx_, argv_[idx]), idx);
+			} else {
+				return quickjs::JSValueRef(ctx_, JS_DupValue(ctx_, argv_[argc_ + idx]), argc_ + idx);
+			}
+		}
+
+		explicit operator bool() const noexcept {
+			return argc_ > 0;
+		}
+
+		int size() const noexcept {
+			return argc_;
+		}
+
+		/**
+		* @brief Checks if the arguments strictly match the expected count and type tags.
+		*
+		* @note This function performs a strict low-level tag comparison. It requires the
+		*       number of arguments to be exactly the same, and does not handle JavaScript
+		*       implicit type coercions (e.g., Int to Double).
+		*
+		* @param argc          The actual number of arguments passed from the JS context.
+		* @param argv          A pointer to the array of JSValue arguments.
+		* @param require_tags A variadic list of expected type tags to match against.
+		* @return true         If argc exactly equals the number of expected tags, and all tags match.
+		* @return false        If the argument count differs, or any tag mismatch occurs.
+		*/
+		template<typename... TagTypes>
+		bool IsArgsOf(TagTypes... require_tags) {
+			constexpr size_t require_size = sizeof...(require_tags);
+			if (size() != static_cast<int>(require_size)) {
+				return false;
+			}
+			const int tags[] = { static_cast<int>(require_tags)... };
+			for (size_t i = 0; i < require_size; i++) {
+				if (JS_VALUE_GET_TAG(argv_[i]) != tags[i]) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		template<typename... TagTypes>
+		bool IsArgsOf(size_t start_idx, TagTypes... require_tags) {
+			constexpr size_t require_size = sizeof...(require_tags);
+			if (size() - start_idx != static_cast<int>(require_size)) {
+				return false;
+			}
+			const int tags[] = { static_cast<int>(require_tags)... };
+			for (size_t i = start_idx; i < require_size; i++) {
+				if (JS_VALUE_GET_TAG(argv_[i]) != tags[i]) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		/**
+		* @brief Checks if the type tags of the first N JSValue arguments exactly match the expected tags.
+		*
+		* @note This function performs a strict low-level tag comparison. It does not handle
+		*       JavaScript implicit type coercions (e.g., Int to Double).
+		*
+		* @param argc          The actual number of arguments passed from the JS context.
+		* @param argv          A pointer to the array of JSValue arguments.
+		* @param expected_tags A variadic list of expected type tags to match against.
+		* @return true         If argc is sufficient and the first N argument tags match exactly.
+		* @return false        If there are not enough arguments, or any tag mismatch occurs.
+		*/
+		template<typename... TagTypes>
+		bool ExpectArgsOf(TagTypes... expected_tags) {
+			constexpr size_t expected_size = sizeof...(expected_tags);
+			if (size() < static_cast<int>(expected_size)) {
+				return false;
+			}
+			const int tags[] = { static_cast<int>(expected_tags)... };
+			for (size_t i = 0; i < expected_size; i++) {
+				if (JS_VALUE_GET_TAG(argv_[i]) != tags[i]) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		template<typename... TagTypes>
+		bool ExpectArgsOf(size_t start_idx, TagTypes... expected_tags) {
+			constexpr size_t expected_size = sizeof...(expected_tags);
+			if (size() - start_idx < static_cast<int>(expected_size)) {
+				return false;
+			}
+			const int tags[] = { static_cast<int>(expected_tags)... };
+			for (size_t i = start_idx; i < expected_size; i++) {
+				if (JS_VALUE_GET_TAG(argv_[i]) != tags[i]) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		~JSArguments() = default;
+
+	private:
+		int argc_;
+		JSValueConst* argv_;
+		JSContext* ctx_;
+	};
+
+	/**
+	* @brief Checks if the arguments strictly match the expected count and type tags.
+	*
+	* @note This function performs a strict low-level tag comparison. It requires the
+	*       number of arguments to be exactly the same, and does not handle JavaScript
+	*       implicit type coercions (e.g., Int to Double).
+	*
+	* @param argc          The actual number of arguments passed from the JS context.
+	* @param argv          A pointer to the array of JSValue arguments.
+	* @param require_tags A variadic list of expected type tags to match against.
+	* @return true         If argc exactly equals the number of expected tags, and all tags match.
+	* @return false        If the argument count differs, or any tag mismatch occurs.
+	*/
+	template<typename... TagTypes>
+	static inline bool JS_IsArgsOf(int argc, JSValue* argv, TagTypes... require_tags) {
+		constexpr size_t require_size = sizeof...(require_tags);
+		if (argc != static_cast<int>(require_size)) {
+			return false;
+		}
+		const int tags[] = { static_cast<int>(require_tags)... };
+		for (size_t i = 0; i < require_size; i++) {
+			if (JS_VALUE_GET_TAG(argv[i]) != tags[i]) {
 				return false;
 			}
 		}
 		return true;
 	}
-	
-	typedef std::function<void(JSValue, JSValue, const size_t)> Iterator;
-	/*Note : Traverse JSArray or JSObject, Callback(key, value, index), return property size or < 0 */
-	static inline size_t for_each(JSContext* ctx, JSValue v, quickjs::Iterator iter) {
+
+	/**
+	* @brief Checks if the type tags of the first N JSValue arguments exactly match the expected tags.
+	*
+	* @note This function performs a strict low-level tag comparison. It does not handle
+	*       JavaScript implicit type coercions (e.g., Int to Double).
+	*
+	* @param argc          The actual number of arguments passed from the JS context.
+	* @param argv          A pointer to the array of JSValue arguments.
+	* @param expected_tags A variadic list of expected type tags to match against.
+	* @return true         If argc is sufficient and the first N argument tags match exactly.
+	* @return false        If there are not enough arguments, or any tag mismatch occurs.
+	*/
+	template<typename... TagTypes>
+	static inline bool JS_ExceptedArgsOf(int argc, JSValue* argv, TagTypes... expected_tags) {
+		constexpr size_t expected_size = sizeof...(expected_tags);
+		if (argc < static_cast<int>(expected_size)) {
+			return false;
+		}
+		const int tags[] = { static_cast<int>(expected_tags)... };
+		for (size_t i = 0; i < expected_size; i++) {
+			if (JS_VALUE_GET_TAG(argv[i]) != tags[i]) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	using for_each_iterator = std::function<void(JSValue, JSValue, const size_t)>;
+	/**
+	* @brief Iterates over the elements of a JS Array or the enumerable string properties of a JS Object.
+	*
+	* For Arrays, it iterates using integer indices from 0 to length.
+	* For Objects, it retrieves and iterates over enumerable string-keyed properties.
+	*
+	* @param ctx   The QuickJS context.
+	* @param obj   The JSValue (must be an Array or Object) to iterate over.
+	* @param iter  The callback function invoked for each element/property.
+	*              Signature: void(JSValue key, JSValue value, size_t index).
+	*
+	* @return int The number of iterated items on success.
+	* @return -1     If the provided JSValue is neither an Array nor an Object.
+	* @return -2     If an error occurs while retrieving object property names.
+	*/
+	static inline int for_each(JSContext* ctx, JSValue v, quickjs::for_each_iterator iter) {
 		if (!JS_IsArray(ctx, v) && !JS_IsObject(v)) {
 			return -1;
 		}
@@ -415,7 +887,7 @@ namespace quickjs {
 				JSValueRef value(ctx, JS_GetPropertyUint32(ctx, v, i));
 				iter(*key, *value, i);
 			}
-			return len;
+			return static_cast<int>(len);
 		} else {
 			uint32_t len = 0;
 			JSPropertyEnum* tab;
@@ -429,7 +901,7 @@ namespace quickjs {
 				iter(*key, *value, i);
 			}
 			JS_FreePropertyEnum(ctx, tab, len);
-			return len;
+			return static_cast<int>(len);
 		}
 	}
 }
