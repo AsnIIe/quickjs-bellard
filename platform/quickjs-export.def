@@ -1,4 +1,4 @@
-LIBRARY
+﻿LIBRARY
 
 EXPORTS
 JS_AddIntrinsicBaseObjects
@@ -231,3 +231,5 @@ JS_FindModule
 JS_SealObject
 JS_FreezeObject
 JS_GetOpaque3
+js_std_timer_mindelay
+js_std_thread_exception

@@ -1,4 +1,4 @@
-/*
+﻿/*
  * QuickJS C library
  *
  * Copyright (c) 2017-2021 Fabrice Bellard
@@ -112,6 +112,7 @@ typedef struct {
     JSValue func;
     int64_t interval;/*for setInterval()*/
     JSValue this_val;
+    int magic;
     int argc;
     JSValue argv[0];
 } JSOSTimer;
@@ -165,6 +166,7 @@ typedef struct JSThreadState {
     int next_timer_id; /* for setTimeout() */
     /* not used in the main thread */
     JSWorkerMessagePipe *recv_pipe, *send_pipe;
+    JSValue current_exception;
 } JSThreadState;
 
 static uint64_t os_pending_signals;
@@ -2231,7 +2233,7 @@ static JSValue js_os_setTimeout(JSContext *ctx, JSValueConst this_val,
     if (JS_ToInt64(ctx, &delay, argv[1]))
         return JS_EXCEPTION;
 
-    int timer_id = js_std_set_timer(ctx, func, JS_UNDEFINED, 0, NULL, 0, delay);
+    int timer_id = js_std_set_timer(ctx, func, JS_UNDEFINED, 0, NULL, 0, delay, 0);
 
     if (!timer_id)
         return JS_EXCEPTION;
@@ -2250,7 +2252,7 @@ static JSValue js_os_setInterval(JSContext* ctx, JSValueConst this_val,
     if (JS_ToInt64(ctx, &interval, argv[1]))
         return JS_EXCEPTION;
 
-    int timer_id = js_std_set_timer(ctx, func, JS_UNDEFINED, 0, NULL, interval, interval);
+    int timer_id = js_std_set_timer(ctx, func, JS_UNDEFINED, 0, NULL, interval, interval, 0);
 
     if (!timer_id)
         return JS_EXCEPTION;
@@ -2319,6 +2321,13 @@ static JSValue js_os_sleepAsync(JSContext *ctx, JSValueConst this_val,
     return promise;
 }
 
+static void js_std_dump_error_file(JSContext* ctx, JSValueConst exception_val) {
+    FILE* fp = fopen("runtime-error.log", "a");
+    JS_PrintValue(ctx, js_print_value_write, fp, exception_val, NULL);
+    fputs("\n===============================================================\n", fp);
+    fclose(fp);
+}
+
 static JS_BOOL call_handler(JSContext *ctx, JSValueConst func, JSValueConst this_val,
                          int argc, JSValueConst* argv)
 {
@@ -2326,6 +2335,8 @@ static JS_BOOL call_handler(JSContext *ctx, JSValueConst func, JSValueConst this
     JS_BOOL success = TRUE;
 
     JSRuntime* rt = JS_GetRuntime(ctx);
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+
     JSRuntimeStackSnapshot snapshot;
     JS_StackSnapshot(rt, &snapshot);
 
@@ -2335,7 +2346,11 @@ static JS_BOOL call_handler(JSContext *ctx, JSValueConst func, JSValueConst this
     ret = JS_Call(ctx, func1, this_val, argc, argv);
     JS_FreeValue(ctx, func1);
     if (JS_IsException(ret)) {
-        js_std_dump_error(ctx);
+        if (!JS_IsUninitialized(ts->current_exception))
+            JS_FreeValue(ctx, ts->current_exception);
+        ts->current_exception = JS_GetException(ctx);
+        js_std_dump_error1(ctx, ts->current_exception);
+
         JS_RecoverySnapshot(rt, &snapshot);
         success = FALSE;
     }
@@ -4439,7 +4454,7 @@ JSValue js_std_await(JSContext *ctx, JSValue obj)
 
 /* return timer_id, 0 if exception, > 0 if successfully. */
 int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
-                     int argc, JSValueConst* argv, int64_t interval, int64_t delay) {
+                     int argc, JSValueConst* argv, int64_t interval, int64_t delay, int magic) {
     argc = argv ? argc : 0;
 
     if (!JS_IsFunction(ctx, job_func))
@@ -4462,6 +4477,7 @@ int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
     th->timeout = get_time_ms() + (delay >= 0 ? delay : 0);
     th->func = JS_DupValue(ctx, job_func);
     th->this_val = JS_DupValue(ctx, this_val);
+    th->magic = magic;
     th->argc = argc;
     for (size_t i = 0; i < argc; i++) {
         th->argv[i] = JS_DupValue(ctx, argv[i]);
@@ -4482,22 +4498,85 @@ void js_std_clear_timer(JSRuntime* rt, int timer_id) {
         free_timer(rt, th);
 }
 
+/* return the delay of the upcoming timer */
+int js_std_timer_mindelay(JSRuntime* rt, int* magic) {
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    if (!ts)
+        return -1;
+
+    int min_delay;
+    int64_t cur_time, delay;
+    struct list_head* el;
+
+    if (JS_IsJobPending(rt)) {
+        return 0;
+    }
+    if (!list_empty(&ts->os_timers)) {
+        cur_time = get_time_ms();
+        min_delay = 10000;
+        list_for_each(el, &ts->os_timers) {
+            JSOSTimer* th = list_entry(el, JSOSTimer, link);
+            delay = th->timeout - cur_time;
+
+            if (delay <= 0) {
+                /* the timer expired */
+                if (magic)
+                    *magic = th->magic;
+                return 0;
+            } else if (delay < min_delay) {
+                if (magic)
+                    *magic = th->magic;
+                min_delay = delay;
+            }
+        }
+        return min_delay;
+    }
+    return -1;
+}
+
+/* return the pending exception or JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
+JSValue js_std_thread_exception(JSRuntime* rt) {
+    JSValue val;
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    if (!ts)
+        return JS_UNINITIALIZED;
+    val = ts->current_exception;
+    ts->current_exception = JS_UNINITIALIZED;
+    return val;
+}
+
 /* same as js_std_loop, execute pending jobs once,
    return < 0 if exception, 0 if no job pending, 1 if a job was
    executed successfully. */
 int js_std_await_jobs(JSContext* ctx) {
     int err = 0;
 
-    err = JS_ExecutePendingJob(JS_GetRuntime(ctx), NULL);
-    if (err >= 0) {
-        if (os_poll_func)
-            err = os_poll_func(ctx);
-        else
-            err = -6;
-    } else {
-        js_std_dump_error(ctx);
-        err = -5;
+    /* execute the pending jobs */
+    for (;;) {
+        err = JS_ExecutePendingJob(JS_GetRuntime(ctx), NULL);
+        if (err <= 0) {
+            if (err < 0)
+                js_std_dump_error_file(ctx, JS_GetException(ctx));
+            break;
+        }
     }
+
+    //invoke js_std_promise_rejection_check(ctx) but don't exit.
+    JSRuntime* rt = JS_GetRuntime(ctx);
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    struct list_head* el;
+    if (unlikely(!list_empty(&ts->rejected_promise_list))) {
+        list_for_each(el, &ts->rejected_promise_list) {
+            JSRejectedPromiseEntry* rp = list_entry(el, JSRejectedPromiseEntry, link);
+            fprintf(stderr, "Possibly unhandled promise rejection: ");
+            js_std_dump_error_file(ctx, rp->reason);
+        }
+    }
+
+    if (os_poll_func)
+        os_poll_func(ctx);
+    else
+        err = -5;
     return err + 1;
 }
 
