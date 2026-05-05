@@ -44,7 +44,7 @@ int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
                      int argc, JSValueConst* argv, int64_t interval, int64_t delay, int magic);
 void js_std_clear_timer(JSRuntime* rt, int timer_id);
 /* return the delay of the upcoming timer */
-int js_std_timer_mindelay(JSRuntime* rt, int* magic);
+int js_std_timer_mindelay(JSRuntime* rt, int* state, int* magic);
 /* return the pending exception or JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
 JSValue js_std_thread_exception(JSRuntime* rt);
 int js_std_await_jobs(JSContext* ctx);

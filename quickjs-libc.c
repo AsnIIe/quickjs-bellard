@@ -107,6 +107,7 @@ typedef struct {
 
 typedef struct {
     struct list_head link;
+    int state;/*0=idle,1=running*/
     int timer_id;
     int64_t timeout;
     JSValue func;
@@ -2321,6 +2322,11 @@ static JSValue js_os_sleepAsync(JSContext *ctx, JSValueConst this_val,
     return promise;
 }
 
+static void js_std_dump_error1(JSContext* ctx, JSValueConst exception_val) {
+    JS_PrintValue(ctx, js_print_value_write, stderr, exception_val, NULL);
+    fputc('\n', stderr);
+}
+
 static void js_std_dump_error_file(JSContext* ctx, JSValueConst exception_val) {
     FILE* fp = fopen("runtime-error.log", "a");
     JS_PrintValue(ctx, js_print_value_write, fp, exception_val, NULL);
@@ -2518,7 +2524,7 @@ static int js_os_poll(JSContext *ctx)
         list_empty(&ts->port_list)) {
         return -1; /* no more events */
     }
-    
+
     if (!list_empty(&ts->os_timers)) {
         cur_time = get_time_ms();
         min_delay = 10000;
@@ -2526,12 +2532,15 @@ static int js_os_poll(JSContext *ctx)
             JSOSTimer *th = list_entry(el, JSOSTimer, link);
             delay = th->timeout - cur_time;
             if (delay <= 0) {
+                th->state = 1;/* change state to running */
                 /* the timer expired */
                 if (th->interval > 0) {
                     th->timeout = cur_time + th->interval;
                     if (!call_handler(ctx, th->func, th->this_val, th->argc, th->argv)) {
                         rc = -2;
                         free_timer(rt, th);
+                    } else {
+                        th->state = 0;/* change state to idle */
                     }
                 } else {
                     if (!call_handler(ctx, th->func, th->this_val, th->argc, th->argv))
@@ -4311,12 +4320,6 @@ void js_std_free_handlers(JSRuntime *rt)
     JS_SetRuntimeOpaque(rt, NULL); /* fail safe */
 }
 
-static void js_std_dump_error1(JSContext *ctx, JSValueConst exception_val)
-{
-    JS_PrintValue(ctx, js_print_value_write, stderr, exception_val, NULL);
-    fputc('\n', stderr);
-}
-
 void js_std_dump_error(JSContext *ctx)
 {
     JSValue exception_val;
@@ -4473,6 +4476,7 @@ int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
         ts->next_timer_id = 1;
     else
         ts->next_timer_id++;
+    th->state = 0;
     th->interval = interval;
     th->timeout = get_time_ms() + (delay >= 0 ? delay : 0);
     th->func = JS_DupValue(ctx, job_func);
@@ -4499,7 +4503,7 @@ void js_std_clear_timer(JSRuntime* rt, int timer_id) {
 }
 
 /* return the delay of the upcoming timer */
-int js_std_timer_mindelay(JSRuntime* rt, int* magic) {
+int js_std_timer_mindelay(JSRuntime* rt, int* state, int* magic) {
     JSThreadState* ts = JS_GetRuntimeOpaque(rt);
     if (!ts)
         return -1;
@@ -4522,10 +4526,14 @@ int js_std_timer_mindelay(JSRuntime* rt, int* magic) {
                 /* the timer expired */
                 if (magic)
                     *magic = th->magic;
+                if (state)
+                    *state = th->state;
                 return 0;
             } else if (delay < min_delay) {
                 if (magic)
                     *magic = th->magic;
+                if (state)
+                    *state = th->state;
                 min_delay = delay;
             }
         }
