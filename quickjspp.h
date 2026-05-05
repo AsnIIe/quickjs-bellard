@@ -1,4 +1,4 @@
-#include "quickjs.h"
+﻿#include "quickjs.h"
 #if defined(_WIN32)
 #include <windows.h>
 #endif
@@ -258,35 +258,35 @@ namespace quickjs {
 	};
 
 	template<typename Type>
-	class unique_ptr {
+	class JSMemRef {
 	public:
-		unique_ptr() noexcept = default;
+		JSMemRef() noexcept = default;
 
-		explicit unique_ptr(JSRuntime* rt, Type* ptr)
+		explicit JSMemRef(JSRuntime* rt, Type* ptr)
 			: rt(rt), ptref(ptr) {
 		}
 
-		explicit unique_ptr(JSContext* ctx, Type* ptr)
+		explicit JSMemRef(JSContext* ctx, Type* ptr)
 			: rt(JS_GetRuntime(ctx)), ptref(ptr) {
 		}
 
-		unique_ptr(const unique_ptr& JSPtRef) = delete;
+		JSMemRef(const JSMemRef& other) = delete;
 
-		unique_ptr(unique_ptr&& JSPtRef) noexcept
-			: ptref(JSPtRef.ptref), rt(JSPtRef.rt) {
-			JSPtRef.release();
+		JSMemRef(JSMemRef&& other) noexcept
+			: ptref(other.ptref), rt(other.rt) {
+			other.release();
 		}
 
-		~unique_ptr() {
+		~JSMemRef() {
 			JS_FreeRT(rt, ptref);
 			release();
 		}
 
-		unique_ptr& operator=(const unique_ptr& JSPtRef) = delete;
+		JSMemRef& operator=(const JSMemRef& other) = delete;
 
-		unique_ptr& operator=(unique_ptr&& JSPtRef) noexcept {
-			reset(JSPtRef.rt, JSPtRef.ptref);
-			JSPtRef.release();
+		JSMemRef& operator=(JSMemRef&& other) noexcept {
+			reset(other.rt, other.ptref);
+			other.release();
 			return *this;
 		}
 
@@ -323,12 +323,12 @@ namespace quickjs {
 	};
 
 	template<typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
-	static inline quickjs::unique_ptr<T> make_unique(JSContext* ctx, size_t size = 1) {
-		return quickjs::unique_ptr<T>(ctx, static_cast<T*>(js_mallocz(ctx, sizeof(T) * size)));
+	static inline quickjs::JSMemRef<T> make_unique(JSContext* ctx, size_t size = 1) {
+		return quickjs::JSMemRef<T>(ctx, static_cast<T*>(js_mallocz(ctx, sizeof(T) * size)));
 	}
 	template<typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
-	static inline quickjs::unique_ptr<T> make_unique(JSRuntime* rt, size_t size = 1) {
-		return quickjs::unique_ptr<T>(rt, static_cast<T*>(js_mallocz_rt(rt, sizeof(T) * size)));
+	static inline quickjs::JSMemRef<T> make_unique(JSRuntime* rt, size_t size = 1) {
+		return quickjs::JSMemRef<T>(rt, static_cast<T*>(js_mallocz_rt(rt, sizeof(T) * size)));
 	}
 
 
@@ -364,18 +364,17 @@ namespace quickjs {
 			:ctx(ctx), string(character.unwrap(ctx, val)) {
 		}
 
-		explicit JSCStringRef(JSContext* ctx, JSAtom atom) {
-			ctx = ctx;
+		explicit JSCStringRef(JSContext* ctx, JSAtom atom) :ctx(ctx) {
 			JSValue v = JS_AtomToValue(ctx, atom);
 			string = character.unwrap(ctx, v);
 			JS_FreeValue(ctx, v);
 		}
 
-		JSCStringRef(const JSCStringRef& JsCstr) = delete;
+		JSCStringRef(const JSCStringRef& other) = delete;
 
-		JSCStringRef(JSCStringRef&& JsCstr) noexcept
-			: string(JsCstr.string), ctx(JsCstr.ctx) {
-			JsCstr.release();
+		JSCStringRef(JSCStringRef&& other) noexcept
+			: string(other.string), ctx(other.ctx) {
+			other.release();
 		}
 
 		~JSCStringRef() {
@@ -385,11 +384,11 @@ namespace quickjs {
 			release();
 		}
 
-		JSCStringRef& operator=(const JSCStringRef& JsCstr) = delete;
+		JSCStringRef& operator=(const JSCStringRef& other) = delete;
 
-		JSCStringRef& operator=(JSCStringRef&& JsCstr) noexcept {
-			reset(JsCstr.ctx, JsCstr.string);
-			JsCstr.release();
+		JSCStringRef& operator=(JSCStringRef&& other) noexcept {
+			reset(other.ctx, other.string);
+			other.release();
 			return *this;
 		}
 
@@ -410,11 +409,11 @@ namespace quickjs {
 			return std::exchange(string, nullptr);
 		}
 
-		void reset(JSContext* ctx = nullptr, const char* cstr = nullptr) noexcept {
+		void reset(JSContext* ctx_ = nullptr, const char* cstr = nullptr) noexcept {
 			if (ctx && string) {
 				character.release(ctx, string);
 			}
-			ctx = ctx;
+			ctx = ctx_;
 			string = cstr;
 		}
 
@@ -440,6 +439,71 @@ namespace quickjs {
 		exception
 	};
 
+	class JSAtomRef {
+	public:
+		JSAtomRef() noexcept = default;
+
+		explicit JSAtomRef(JSContext* ctx, JSAtom atom)
+			:ctx_(ctx), atom_(atom) {
+
+		}
+
+		explicit JSAtomRef(JSContext* ctx, JSValue val)
+			:ctx_(ctx), atom_(JS_ValueToAtom(ctx, val)) {
+		}
+
+		JSAtomRef(const JSAtomRef& other) = delete;
+
+		JSAtomRef(JSAtomRef&& other) noexcept
+			:ctx_(other.ctx_), atom_(other.atom_) {
+			other.release();
+		}
+
+		JSAtomRef& operator=(const JSAtomRef& other) = delete;
+		JSAtomRef& operator=(JSAtomRef&& other) noexcept {
+			reset(other.ctx_, other.atom_);
+			other.release();
+			return *this;
+		}
+
+		~JSAtomRef() {
+			if (ctx_ && atom_) {
+				JS_FreeAtom(ctx_, atom_);
+			}
+			release();
+		}
+
+		JSAtom get() const {
+			return atom_;
+		}
+
+		JSAtom operator*() const {
+			return get();
+		}
+
+		operator bool() const noexcept {
+			return atom_ != 0;
+		}
+
+		JSAtom release() noexcept {
+			ctx_ = nullptr;
+			atom_ = 0;
+			return std::exchange(atom_, 0);
+		}
+
+		void reset(JSContext* ctx = nullptr, JSAtom atom = 0) {
+			if (ctx_ && atom_) {
+				JS_FreeAtom(ctx_, atom_);
+			}
+			ctx_ = ctx;
+			atom_ = atom;
+		}
+
+	private:
+		JSContext* ctx_;
+		JSAtom atom_;
+	};
+
 	class JSValueRef {
 	public:
 		JSValueRef() noexcept = default;
@@ -448,11 +512,11 @@ namespace quickjs {
 			: ctx(ctx), ref(val), argument_idx(arg_idx) {
 		}
 
-		JSValueRef(const JSValueRef& valueRef) = delete;
+		JSValueRef(const JSValueRef& other) = delete;
 
-		JSValueRef(JSValueRef&& valueRef) noexcept
-			: ref(valueRef.ref), ctx(valueRef.ctx), argument_idx(valueRef.argument_idx) {
-			valueRef.release();
+		JSValueRef(JSValueRef&& other) noexcept
+			: ref(other.ref), ctx(other.ctx), argument_idx(other.argument_idx) {
+			other.release();
 		}
 
 		~JSValueRef() {
@@ -462,11 +526,11 @@ namespace quickjs {
 			release();
 		}
 
-		JSValueRef& operator=(const JSValueRef& valueRef) = delete;
+		JSValueRef& operator=(const JSValueRef& other) = delete;
 
-		JSValueRef& operator=(JSValueRef&& valueRef) noexcept {
-			reset(valueRef.ctx, valueRef.ref, valueRef.argument_idx);
-			valueRef.release();
+		JSValueRef& operator=(JSValueRef&& other) noexcept {
+			reset(other.ctx, other.ref, other.argument_idx);
+			other.release();
 			return *this;
 		}
 
@@ -484,11 +548,11 @@ namespace quickjs {
 			return std::exchange(ref, JS_UNDEFINED);
 		}
 
-		void reset(JSContext* ctx = nullptr, JSValue val = JS_UNDEFINED, int arg_idx = -1) noexcept {
+		void reset(JSContext* ctx_ = nullptr, JSValue val = JS_UNDEFINED, int arg_idx = -1) noexcept {
 			if (ctx && ref != JS_UNDEFINED) {
 				JS_FreeValue(ctx, ref);
 			}
-			ctx = ctx;
+			ctx = ctx_;
 			ref = val;
 			argument_idx = arg_idx;
 		}
@@ -540,7 +604,11 @@ namespace quickjs {
 			if (!is<JSType::object>()) {
 				throw quickjs::type_error("object is required", argument_idx);
 			}
-			return quickjs::JSValueRef(ctx, JS_GetPropertyStr(ctx, ref, key));
+			JSAtomRef prop(ctx, *JSValueRef(ctx, JS_NewString(ctx, key)));
+			if (JS_HasProperty(ctx, ref, *prop)) {
+				return quickjs::JSValueRef(ctx, JS_GetProperty(ctx, ref, *prop));
+			}
+			return quickjs::JSValueRef();
 		}
 
 		//Note: If is array, without verify length
@@ -548,7 +616,11 @@ namespace quickjs {
 			if (!is<JSType::array>()) {
 				throw quickjs::type_error("array is required", argument_idx);
 			}
-			return quickjs::JSValueRef(ctx, JS_GetPropertyUint32(ctx, ref, idx));
+			JSAtomRef prop(ctx, *JSValueRef(ctx, JS_NewInt32(ctx, idx)));
+			if (JS_HasProperty(ctx, ref, *prop)) {
+				return quickjs::JSValueRef(ctx, JS_GetProperty(ctx, ref, *prop));
+			}
+			return quickjs::JSValueRef();
 		}
 
 		//Note: If is array, get property .length
@@ -663,7 +735,7 @@ namespace quickjs {
 			return JS_VALUE_GET_TAG(ref) == JS_TAG_EXCEPTION;
 		}
 
-		template<typename T, typename = std::enable_if_t<!std::is_same_v<T, const char*> && !std::is_same_v<T, char*>>>
+		template<typename T>
 		T value() const {
 			if (!is<T>()) {
 				throw quickjs::type_error(quickjs::format_str("%s is required", typeid(T).name()), argument_idx);
@@ -696,6 +768,11 @@ namespace quickjs {
 		}
 
 		template<>
+		const char* value<const char*>() const = delete;
+		template<>
+		char* value<char*>() const = delete;
+
+		template<>
 		std::string value<std::string>() const {
 			if (!is<std::string>()) {
 				throw quickjs::type_error("string is required", argument_idx);
@@ -722,12 +799,20 @@ namespace quickjs {
 			return quickjs::JSCStringA(ctx, ref);
 		}
 
-		/*Note: If the argument is passed, verify the type. Return the default value if not passed */
-		template<typename T, typename = std::enable_if_t<!std::is_same_v<T, const char*> && !std::is_same_v<T, char*>>>
-		T value(T default_val) const {
+		/**
+		 * @brief Note: If the argument is passed, verify the type. Or return the default value.
+		 *
+		 * @param default_val  The fallback value to return if validation fails or context is null.
+		 * @param throw_err    If true, throws quickjs::type_error on type mismatch; if false, returns default_val.
+		 */
+		template<typename T>
+		T value(T default_val, bool throw_err = true) const {
 			if (!ctx) {
 				return default_val;
 			} else if (ctx && !is<T>()) {
+				if (!throw_err)
+					return default_val;
+
 				std::string type_name(typeid(T).name());
 				if (typeid(quickjs::JSCString) == typeid(T)
 					|| typeid(quickjs::JSCStringA) == typeid(T)
@@ -738,6 +823,11 @@ namespace quickjs {
 			}
 			return value<T>();
 		}
+
+		template<>
+		const char* value<const char*>(const char* default_val, bool throw_err) const = delete;
+		template<>
+		char* value<char*>(char* default_val, bool throw_err) const = delete;
 
 	private:
 		JSValue ref = JS_UNDEFINED;
@@ -787,6 +877,18 @@ namespace quickjs {
 		}
 
 		/**
+		 * @brief Validates that the function received a minimum number of arguments.
+		 *
+		 * @param required_size The required minimum number of arguments.
+		 * @throws quickjs::type_error If the actual number of arguments is less than required_size.
+		 */
+		void requireArgumentSize(size_t required_size) const {
+			if (argc_ < required_size) {
+				throw quickjs::type_error(quickjs::format_str("%d arguments required, but only %d present", required_size, argc_));
+			}
+		}
+
+		/**
 		* @brief Checks if the arguments strictly match the expected count and type tags.
 		*
 		* @note This function performs a strict low-level tag comparison. It requires the
@@ -800,7 +902,7 @@ namespace quickjs {
 		* @return false        If the argument count differs, or any tag mismatch occurs.
 		*/
 		template<typename... TagTypes>
-		bool IsArgsOf(TagTypes... require_tags) {
+		bool IsArgsOf(TagTypes... require_tags) const noexcept {
 			constexpr size_t require_size = sizeof...(require_tags);
 			if (size() != static_cast<int>(require_size)) {
 				return false;
@@ -815,7 +917,7 @@ namespace quickjs {
 		}
 
 		template<typename... TagTypes>
-		bool IsArgsOf(size_t start_idx, TagTypes... require_tags) {
+		bool IsArgsOf(size_t start_idx, TagTypes... require_tags) const noexcept {
 			constexpr size_t require_size = sizeof...(require_tags);
 			if (size() - start_idx != static_cast<int>(require_size)) {
 				return false;
@@ -842,7 +944,7 @@ namespace quickjs {
 		* @return false        If there are not enough arguments, or any tag mismatch occurs.
 		*/
 		template<typename... TagTypes>
-		bool ExpectArgsOf(TagTypes... expected_tags) {
+		bool ExpectArgsOf(TagTypes... expected_tags) const noexcept {
 			constexpr size_t expected_size = sizeof...(expected_tags);
 			if (size() < static_cast<int>(expected_size)) {
 				return false;
@@ -857,7 +959,7 @@ namespace quickjs {
 		}
 
 		template<typename... TagTypes>
-		bool ExpectArgsOf(size_t start_idx, TagTypes... expected_tags) {
+		bool ExpectArgsOf(size_t start_idx, TagTypes... expected_tags) const noexcept {
 			constexpr size_t expected_size = sizeof...(expected_tags);
 			if (size() - start_idx < static_cast<int>(expected_size)) {
 				return false;
