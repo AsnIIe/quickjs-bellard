@@ -30,6 +30,5 @@ run_octane
 run_sunspider_like
 libwinpthread*.dll
 /build/
-/libs
 /thirdparty/libs
 /examples/main.cpp

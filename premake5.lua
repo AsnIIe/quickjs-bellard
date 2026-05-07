@@ -10,7 +10,7 @@ workspace "quickjs-bellard"
 	-- Premake output folder
 	location(path.join("build", _ACTION))
 
-	platforms { "x86", "x64", "arm32", "arm64"  } 
+	platforms { "x86", "x64"  } 
 
 	defines { "CONFIG_VERSION=\""..ver.."\"" }
 
@@ -20,14 +20,7 @@ workspace "quickjs-bellard"
 	filter "platforms:x86"
   		architecture "x86"
 	filter "platforms:x64"
-  		architecture "x86_64"  
-	filter "platforms:arm32"
-  		architecture "ARM"  
-	filter "platforms:arm64"
-  		architecture "ARM64"  
-
-	filter "system:windows"
-  		removeplatforms { "arm32" }  
+  		architecture "x64"  
 
 	-- Debug configuration
 	filter { "configurations:Debug" }
@@ -60,7 +53,7 @@ workspace "quickjs-bellard"
         "thirdparty/libs/%{cfg.buildcfg}",
     }
 	filter "system:windows"
-        links { "pthread_static_%{cfg.platform}.lib" }
+        links { "libwinpthread%{cfg.platform}.lib" }
 -----------------------------------------------------------------------------------------------------------------------
 project "libruntime"
 	language "C"
@@ -123,7 +116,8 @@ project "libquickjs"
 		"quickjs-libc.c",
 		"dtoa.c"
 	}
-	targetdir "libs/"
+	targetdir "build/lib/%{cfg.buildcfg}"
+	targetname "%{prj.name}_%{cfg.platform}"
 -----------------------------------------------------------------------------------------------------------------------
 project "examples"
 	language "C"
@@ -136,7 +130,7 @@ project "examples"
 project "qjsc"
 	language "C"
 	kind "ConsoleApp"
-	links { "libquickjs" }
+	links { "libruntime" }
 	files {
 		"qjsc.c"
 	}
@@ -144,7 +138,7 @@ project "qjsc"
 project "qjs"
 	language "C"
 	kind "ConsoleApp"
-	links { "libquickjs" }
+	links { "libruntime" }
 	dependson { "qjsc" }
 	files {
 		"qjs.c",
