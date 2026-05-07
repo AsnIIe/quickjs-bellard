@@ -2535,11 +2535,11 @@ static int js_os_poll(JSContext *ctx)
                 th->state = 1;/* change state to running */
                 /* the timer expired */
                 if (th->interval > 0) {
-                    th->timeout = cur_time + th->interval;
                     if (!call_handler(ctx, th->func, th->this_val, th->argc, th->argv)) {
                         rc = -2;
                         free_timer(rt, th);
                     } else {
+                        th->timeout = cur_time + th->interval;
                         th->state = 0;/* change state to idle */
                     }
                 } else {
@@ -4521,15 +4521,7 @@ int js_std_timer_mindelay(JSRuntime* rt, int* state, int* magic) {
         list_for_each(el, &ts->os_timers) {
             JSOSTimer* th = list_entry(el, JSOSTimer, link);
             delay = th->timeout - cur_time;
-
-            if (delay <= 0) {
-                /* the timer expired */
-                if (magic)
-                    *magic = th->magic;
-                if (state)
-                    *state = th->state;
-                return 0;
-            } else if (delay < min_delay) {
+            if (delay < min_delay) {
                 if (magic)
                     *magic = th->magic;
                 if (state)
@@ -4537,7 +4529,7 @@ int js_std_timer_mindelay(JSRuntime* rt, int* state, int* magic) {
                 min_delay = delay;
             }
         }
-        return min_delay;
+        return min_delay < 0 ? 0 : min_delay;
     }
     return -1;
 }
