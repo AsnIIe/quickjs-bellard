@@ -216,7 +216,6 @@ static inline void JS_FreeCStringA(JSContext* ctx, const char* str) {
 #if defined(__cplusplus)
 #include <iostream>
 #include <functional>
-#include <vector>
 
 namespace quickjs {
 	inline std::string format_str(const char* fmt, ...) {
@@ -498,6 +497,8 @@ namespace quickjs {
 		JSAtom atom_;
 	};
 
+	class JSPropertyRef;
+
 	class JSValueRef {
 	public:
 		JSValueRef() noexcept = default;
@@ -581,39 +582,16 @@ namespace quickjs {
 			return value<quickjs::JSCStringA>();
 		}
 
+		/*Note: When using the class quickjs::JSPropertyRef, it must be defined after quickjs::JSPropertyRef */
 		//Note: If is object
-		quickjs::JSValueRef operator[](std::string key) const {
-			return operator[](key.c_str());
-		}
-
+		quickjs::JSPropertyRef operator[](std::string key) const;
 		//Note: If is object
-		quickjs::JSValueRef operator[](const char* key) const {
-			return operator[](const_cast<char*>(key));
-		}
-
+		quickjs::JSPropertyRef operator[](const char* key) const;
 		//Note: If is object
-		quickjs::JSValueRef operator[](char* key) const {
-			if (!is<JSType::object>()) {
-				throw type_error("object is required");
-			}
-			JSAtomRef prop(ctx, *JSValueRef(ctx, JS_NewString(ctx, key)));
-			if (JS_HasProperty(ctx, ref, *prop)) {
-				return quickjs::JSValueRef(ctx, JS_GetProperty(ctx, ref, *prop));
-			}
-			return quickjs::JSValueRef();
-		}
+		quickjs::JSPropertyRef operator[](char* key) const;
 
 		//Note: If is array, without verify length
-		quickjs::JSValueRef operator[](size_t idx) const {
-			if (!is<JSType::array>()) {
-				throw type_error("array is required");
-			}
-			JSAtomRef prop(ctx, *JSValueRef(ctx, JS_NewInt32(ctx, idx)));
-			if (JS_HasProperty(ctx, ref, *prop)) {
-				return quickjs::JSValueRef(ctx, JS_GetProperty(ctx, ref, *prop));
-			}
-			return quickjs::JSValueRef();
-		}
+		quickjs::JSPropertyRef operator[](size_t idx) const;
 
 		//Note: If is array, get property .length
 		size_t length() const {
@@ -894,6 +872,114 @@ namespace quickjs {
 		JSContext* ctx = nullptr;
 	};
 
+	class JSPropertyRef :public JSValueRef {
+	public:
+		//using JSValueRef::JSValueRef;
+
+		JSPropertyRef() = delete;
+
+		explicit JSPropertyRef(JSContext* ctx, JSValue val, std::string name) :JSValueRef(ctx, val),
+			property_name(name),
+			property_exists(ctx != nullptr) {
+		}
+
+		explicit JSPropertyRef(std::string name) :JSValueRef(),
+			property_name(name),
+			property_exists(false) {
+		}
+
+		JSPropertyRef(const JSPropertyRef& other) = delete;
+
+		JSPropertyRef(JSPropertyRef&& other) noexcept :JSValueRef(std::move(other)),
+			property_name(other.property_name),
+			property_exists(other.property_exists) {
+			other.property_name.clear();
+			other.property_exists = false;
+		}
+
+		JSPropertyRef& operator=(const JSPropertyRef& other) = delete;
+
+		JSPropertyRef& operator=(JSPropertyRef&& other) noexcept {
+			if (this != &other) {
+				property_name = other.property_name;
+				property_exists = other.property_exists;
+				other.property_name.clear();
+				other.property_exists = false;
+				JSValueRef::operator=(std::move(other));
+			}
+			return *this;
+		}
+
+		void reset(JSContext* ctx = nullptr, JSValue val = JS_UNDEFINED, std::string name = std::string()) noexcept {
+			property_name = name;
+			property_exists = ctx != nullptr;
+			JSValueRef::reset(ctx, val);
+		}
+
+		JSValue release() noexcept {
+			property_name.clear();
+			property_exists = false;
+			return JSValueRef::release();
+		}
+
+		virtual ~JSPropertyRef() {
+			property_name.clear();
+			property_exists = false;
+		}
+
+	private:
+		bool property_exists;
+		std::string property_name;
+
+	protected:
+		virtual quickjs::type_error type_error(const std::string& msg) const override {
+			std::string msg_ = msg;
+			if (!property_exists) {
+				msg_ = quickjs::format_str("no property named '%s'", property_name.c_str());
+			} else if (!property_name.empty()) {
+				msg_ = quickjs::format_str("%s at property named '%s'", msg.c_str(), property_name.c_str());
+			}
+			return quickjs::type_error(msg_);
+		}
+	};
+
+	/*
+	=============================================[ JSValueRef ]===============================================
+	*/
+	/* Marking as inline is mandatory, otherwise redefining when linking */
+	inline quickjs::JSPropertyRef quickjs::JSValueRef::operator[](std::string key) const {
+		return operator[](key.c_str());
+	}
+
+	inline quickjs::JSPropertyRef quickjs::JSValueRef::operator[](const char* key) const {
+		return operator[](const_cast<char*>(key));
+	}
+
+	inline quickjs::JSPropertyRef quickjs::JSValueRef::operator[](char* key) const {
+		if (!is<JSType::object>()) {
+			throw type_error("object is required");
+		}
+		JSAtomRef prop(ctx, *JSValueRef(ctx, JS_NewString(ctx, key)));
+		if (JS_HasProperty(ctx, ref, *prop)) {
+			return quickjs::JSPropertyRef(ctx, JS_GetProperty(ctx, ref, *prop), key);
+		}
+		return quickjs::JSPropertyRef(key);
+	}
+
+	inline quickjs::JSPropertyRef quickjs::JSValueRef::operator[](size_t idx) const {
+		if (!is<JSType::array>()) {
+			throw type_error("array is required");
+		}
+		JSAtomRef prop(ctx, *JSValueRef(ctx, JS_NewInt32(ctx, idx)));
+		if (JS_HasProperty(ctx, ref, *prop)) {
+			return quickjs::JSPropertyRef(ctx, JS_GetProperty(ctx, ref, *prop), quickjs::format_str("[%d]", idx));
+		}
+		return quickjs::JSPropertyRef(quickjs::format_str("[%d]", idx));
+	}
+	/*
+	=============================================[ JSValueRef ]===============================================
+	*/
+
 	class JSArgumentRef :public JSValueRef {
 	public:
 		JSArgumentRef() = delete;
@@ -1024,7 +1110,7 @@ namespace quickjs {
 				return;
 			}
 			bool matched = true;
-			const std::vector<JSType> tags{ static_cast<JSType>(require_tags)... };
+			const JSType tags[] = { static_cast<JSType>(require_tags)... };
 			for (size_t i = 0; i < require_size; i++) {
 				if (!(*this)[i].is(tags[i])) {
 					matched = false;
