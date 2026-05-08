@@ -408,6 +408,10 @@ namespace quickjs {
 			return string != nullptr;
 		}
 
+		operator std::string() const noexcept {
+			return std::string(string);
+		}
+
 		const char* release() noexcept {
 			ctx = nullptr;
 			return std::exchange(string, nullptr);
@@ -607,57 +611,20 @@ namespace quickjs {
 
 		template<typename T>
 		bool is() const {
+			if (std::is_same_v<std::decay_t<T>, bool>) {
+				return is<JSType::boolean>();
+			} else if (std::is_integral_v<std::decay_t<T>>) {
+				return is<JSType::integer>();
+			} else if (std::is_floating_point_v<std::decay_t<T>>) {
+				return is<JSType::number>();
+			} else if (std::is_same_v<std::decay_t<T>, std::string>
+					   || std::is_same_v<std::decay_t<T>, const char*>
+					   || std::is_same_v<std::decay_t<T>, char*>
+					   || std::is_same_v<std::decay_t<T>, quickjs::JSCString>
+					   || std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>) {
+				return is<JSType::string>();
+			}
 			return false;
-		}
-
-		template<>
-		bool is<int>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_INT;
-		}
-
-		template<>
-		bool is<size_t>() const {
-			return is<int>();
-		}
-
-		template<>
-		bool is<bool>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_BOOL;
-		}
-
-		template<>
-		bool is<const char*>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_STRING;
-		}
-
-		template<>
-		bool is<char*>() const {
-			return is<const char*>();
-		}
-
-		template<>
-		bool is<std::string>() const {
-			return is<const char*>();
-		}
-
-		template<>
-		bool is<quickjs::JSCStringA>() const {
-			return is<const char*>();
-		}
-
-		template<>
-		bool is<quickjs::JSCString>() const {
-			return is<const char*>();
-		}
-
-		template<>
-		bool is<double>() const {
-			return JS_IsNumber(ref);
-		}
-
-		template<>
-		bool is<float>() const {
-			return JS_IsNumber(ref);
 		}
 
 		template<JSType T>
@@ -667,22 +634,22 @@ namespace quickjs {
 
 		template<>
 		bool is<JSType::integer>() const {
-			return is<int>();
+			return JS_VALUE_GET_TAG(ref) == JS_TAG_INT;
 		}
 
 		template<>
 		bool is<JSType::boolean>() const {
-			return is<bool>();
+			return JS_VALUE_GET_TAG(ref) == JS_TAG_BOOL;
 		}
 
 		template<>
 		bool is<JSType::number>() const {
-			return is<double>();
+			return JS_IsNumber(ref);
 		}
 
 		template<>
 		bool is<JSType::string>() const {
-			return is<const char*>();
+			return JS_VALUE_GET_TAG(ref) == JS_TAG_STRING;
 		}
 
 		template<>
@@ -762,29 +729,26 @@ namespace quickjs {
 			if (!is<T>()) {
 				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
 			}
-			if (typeid(int) == typeid(T)) {
+			if (std::is_same_v<std::decay_t<T>, bool>) {
+				return static_cast<T>(JS_ToBool(ctx, ref));
+			} else if (std::is_integral_v<std::decay_t<T>>) {
 				int val;
 				if (JS_ToInt32(ctx, &val, ref) == -1) {
 					throw type_error("type conversion error");
 				}
-				return val;
-			} else if (typeid(size_t) == typeid(T)) {
-				int val;
-				if (JS_ToInt32(ctx, &val, ref) == -1) {
-					throw type_error("type conversion error");
-				}
-				if (val < 0) {
+				if (std::is_unsigned_v<T> && val < 0) {
 					throw type_error("positive integer is required");
 				}
 				return static_cast<T>(val);
-			} else if (typeid(double) == typeid(T) || typeid(float) == typeid(T)) {
+			} else if (std::is_floating_point_v<std::decay_t<T>>) {
 				double val;
 				if (JS_ToFloat64(ctx, &val, ref) == -1) {
 					throw type_error("type conversion error");
 				}
+				if (std::is_unsigned_v<T> && val < 0) {
+					throw type_error("positive number is required");
+				}
 				return static_cast<T>(val);
-			} else if (typeid(bool) == typeid(T)) {
-				return JS_ToBool(ctx, ref);
 			}
 			throw type_error("type mismatch");
 		}
@@ -831,7 +795,7 @@ namespace quickjs {
 		T value(T default_val, bool throw_err = true) const {
 			if (!ctx) {
 				return default_val;
-			} else if (ctx && !is<T>()) {
+			} else if (!is<T>()) {
 				if (!throw_err)
 					return default_val;
 
@@ -853,17 +817,18 @@ namespace quickjs {
 	private:
 		template<typename T>
 		std::string type_name() const noexcept {
-			if (typeid(int) == typeid(T) || typeid(size_t) == typeid(T)) {
+			if (std::is_same_v<std::decay_t<T>, bool>) {
+				return "boolean";
+			} else if (std::is_integral_v<std::decay_t<T>>) {
 				return "integer";
-			} else if (typeid(quickjs::JSCString) == typeid(T)
-					   || typeid(quickjs::JSCStringA) == typeid(T)
-					   || typeid(std::string) == typeid(T)) {
-				return "string";
-			} else if (typeid(double) == typeid(T)
-					   || typeid(float) == typeid(T)) {
+			} else if (std::is_floating_point_v<std::decay_t<T>>) {
 				return "number";
-			} else if (typeid(bool) == typeid(T)) {
-				return "bool";
+			} else if (std::is_same_v<std::decay_t<T>, std::string>
+					   || std::is_same_v<std::decay_t<T>, const char*>
+					   || std::is_same_v<std::decay_t<T>, char*>
+					   || std::is_same_v<std::decay_t<T>, quickjs::JSCString>
+					   || std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>) {
+				return "string";
 			}
 			return typeid(T).name();
 		}
@@ -1049,7 +1014,7 @@ namespace quickjs {
 		bool no_arguments = true;
 	};
 
-	/*Note : Return quickjs::JSValueRef, Invoke JS_DupValue and save an additional argument index */
+	/*Note : Return quickjs::JSArgumentRef, Invoke JS_DupValue and save an additional argument index */
 	template<size_t Index>
 	static inline quickjs::JSArgumentRef dump_argument(JSContext* ctx, int argc, JSValue* argv) {
 		if (Index < argc) {
