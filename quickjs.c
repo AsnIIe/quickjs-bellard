@@ -1,4 +1,4 @@
-/*
+﻿/*
  * QuickJS Javascript Engine
  *
  * Copyright (c) 2017-2025 Fabrice Bellard
@@ -60019,9 +60019,11 @@ JSAtom JS_GetClassName(JSRuntime* rt, JSClassID class_id) {
 }
 
 JSValue JS_GetModuleExportItem(JSContext* ctx, JSModuleDef* m, JSAtom atom) {
+    if(!m)
+        return JS_UNDEFINED;
     for (int n = 0; n < m->export_entries_count; ++n) {
         JSExportEntry* me = &m->export_entries[n];
-        if (me->export_name == atom && me->export_type == JS_EXPORT_TYPE_LOCAL /*???*/) {
+        if (me->u.local.var_ref && me->export_name == atom && me->export_type == JS_EXPORT_TYPE_LOCAL /*???*/) {
             return JS_DupValue(ctx, me->u.local.var_ref->value);
         }
     }
@@ -60029,13 +60031,17 @@ JSValue JS_GetModuleExportItem(JSContext* ctx, JSModuleDef* m, JSAtom atom) {
 }
 
 int JS_GetModuleExportCount(JSContext* ctx, JSModuleDef* m) {
+    if (!m)
+        return -1;
     return m->export_entries_count;
 }
 
 JSValue JS_GetModuleExportItemUint32(JSContext* ctx, JSModuleDef* m, uint32_t idx) {
+    if (!m)
+        return JS_UNDEFINED;
     if (idx >= 0 && idx < m->export_entries_count) {
         JSExportEntry* me = &m->export_entries[idx];
-        if (me->export_type == JS_EXPORT_TYPE_LOCAL /*???*/) {
+        if (me->u.local.var_ref && me->export_type == JS_EXPORT_TYPE_LOCAL /*???*/) {
             return JS_DupValue(ctx, me->u.local.var_ref->value);
         }
     }
@@ -60043,6 +60049,8 @@ JSValue JS_GetModuleExportItemUint32(JSContext* ctx, JSModuleDef* m, uint32_t id
 }
 
 JSAtom JS_GetModuleExportItemName(JSContext* ctx, JSModuleDef* m, uint32_t idx) {
+    if (!m)
+        return JS_ATOM_NULL;
     if (idx >= 0 && idx < m->export_entries_count) {
         JSExportEntry* me = &m->export_entries[idx];
         if (me->export_type == JS_EXPORT_TYPE_LOCAL /*???*/) {
