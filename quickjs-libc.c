@@ -4607,6 +4607,22 @@ JSModuleDef* js_std_load_module(JSContext* ctx, const char* buf, size_t buf_len,
         m = JS_VALUE_GET_PTR(func_val);
     }
     JS_FreeValue(ctx, func_val);
+
+    if (!m)
+        return NULL;
+
+    if (JS_ResolveModule(ctx, JS_MKPTR(JS_TAG_MODULE, m)) < 0) {
+        return NULL;
+    }
+    /* Evaluate the module code */
+    JSValue func_obj, ret;
+    func_obj = JS_DupValue(ctx, JS_MKPTR(JS_TAG_MODULE, m));
+    ret = JS_EvalFunction(ctx, func_obj);
+    if (JS_IsException(ret)) {
+        JS_FreeValue(ctx, ret); /* XXX: what to do if exception ? */
+        return NULL;
+    }
+    JS_FreeValue(ctx, ret);
     return m;
 }
 
