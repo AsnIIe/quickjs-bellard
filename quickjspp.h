@@ -276,8 +276,8 @@ namespace quickjs {
 
 		JSMemRef(const JSMemRef& other) = delete;
 
-		JSMemRef(JSMemRef&& other) noexcept
-			: ptref(other.ptref), rt(other.rt) {
+		JSMemRef(JSMemRef&& other) noexcept {
+			reset(other.rt, other.ptref);
 			other.release();
 		}
 
@@ -376,8 +376,8 @@ namespace quickjs {
 
 		JSCStringRef(const JSCStringRef& other) = delete;
 
-		JSCStringRef(JSCStringRef&& other) noexcept
-			: string(other.string), ctx(other.ctx) {
+		JSCStringRef(JSCStringRef&& other) noexcept {
+			reset(other.ctx, other.string);
 			other.release();
 		}
 
@@ -451,8 +451,8 @@ namespace quickjs {
 
 		JSAtomRef(const JSAtomRef& other) = delete;
 
-		JSAtomRef(JSAtomRef&& other) noexcept
-			:ctx_(other.ctx_), atom_(other.atom_) {
+		JSAtomRef(JSAtomRef&& other) noexcept {
+			reset(other.ctx_, other.atom_);
 			other.release();
 		}
 
@@ -513,8 +513,8 @@ namespace quickjs {
 
 		JSValueRef(const JSValueRef& other) = delete;
 
-		JSValueRef(JSValueRef&& other) noexcept
-			: ref(other.ref), ctx(other.ctx) {
+		JSValueRef(JSValueRef&& other) noexcept {
+			reset(other.ctx, other.ref);
 			other.release();
 		}
 
@@ -595,7 +595,7 @@ namespace quickjs {
 		quickjs::JSPropertyRef operator[](char* key) const;
 
 		//Note: If is array, without verify length
-		quickjs::JSPropertyRef operator[](size_t idx) const;
+		quickjs::JSPropertyRef operator[](int idx) const;
 
 		//Note: If is array, get property .length
 		size_t length() const {
@@ -931,7 +931,7 @@ namespace quickjs {
 		return quickjs::JSPropertyRef(key);
 	}
 
-	inline quickjs::JSPropertyRef quickjs::JSValueRef::operator[](size_t idx) const {
+	inline quickjs::JSPropertyRef quickjs::JSValueRef::operator[](int idx) const {
 		if (!is<JSType::array>()) {
 			throw type_error("array is required");
 		}
@@ -1036,6 +1036,7 @@ namespace quickjs {
 		JSArguments& operator=(const JSArguments& arguments) = delete;
 		JSArguments& operator=(JSArguments&& arguments) = delete;
 
+		/* maybe assertion failed: list_empty(&rt->gc_obj_list), when use 'arguments[0][5].value<bool>()' but throw exception */
 		quickjs::JSArgumentRef operator[](int idx) {
 			if (std::abs(idx) >= size()) {
 				return quickjs::JSArgumentRef(idx);
