@@ -1,4 +1,4 @@
-/*
+﻿/*
  * QuickJS Javascript Engine
  *
  * Copyright (c) 2017-2021 Fabrice Bellard
@@ -96,6 +96,7 @@ enum {
     /* any larger tag is FLOAT64 if JS_NAN_BOXING */
 };
 
+/* must match the layout of 'JSMallocBlockHeader' */
 typedef struct JSRefCountHeader {
     int ref_count;
 } JSRefCountHeader;
@@ -216,7 +217,7 @@ static inline JSValue __JS_NewShortBigInt(JSContext *ctx, int32_t d)
 #else /* !JS_NAN_BOXING */
 
 typedef union JSValueUnion {
-    int32_t int32;
+    uint64_t uint64;
     double float64;
     void *ptr;
 #if JS_SHORT_BIG_INT_BITS == 32
@@ -236,14 +237,16 @@ typedef struct JSValue {
 #define JS_VALUE_GET_TAG(v) ((int32_t)(v).tag)
 /* same as JS_VALUE_GET_TAG, but return JS_TAG_FLOAT64 with NaN boxing */
 #define JS_VALUE_GET_NORM_TAG(v) JS_VALUE_GET_TAG(v)
-#define JS_VALUE_GET_INT(v) ((v).u.int32)
-#define JS_VALUE_GET_BOOL(v) ((v).u.int32)
+#define JS_VALUE_GET_INT(v) ((int)(v).u.uint64)
+#define JS_VALUE_GET_BOOL(v) ((int)(v).u.uint64)
 #define JS_VALUE_GET_FLOAT64(v) ((v).u.float64)
 #define JS_VALUE_GET_SHORT_BIG_INT(v) ((v).u.short_big_int)
 #define JS_VALUE_GET_PTR(v) ((v).u.ptr)
 
 #if !defined(__cplusplus)
-#define JS_MKVAL(tag, val) (JSValue){ (JSValueUnion){ .int32 = val }, tag }
+/* avoid uninitialized data by using a 64 bit field even if only 32
+   bits are needed because some compilers generate slower code */
+#define JS_MKVAL(tag, val) (JSValue) { (JSValueUnion){.uint64 = (uint32_t)(val)}, tag }
 #define JS_MKPTR(tag, p) (JSValue){ (JSValueUnion){ .ptr = p }, tag }
 
 #define JS_TAG_IS_FLOAT64(tag) ((unsigned)(tag) == JS_TAG_FLOAT64)
@@ -253,7 +256,7 @@ typedef struct JSValue {
 static inline JSValue JS_MKVAL(int64_t tag, int32_t val) {
     JSValue v = {};
     v.tag = tag;
-    v.u.int32 = val;
+    v.u.uint64 = (uint32_t)(val);
     return v;
 }
 
@@ -704,10 +707,16 @@ JSValue __js_printf_like(2, 3) JS_ThrowInternalError(JSContext *ctx, const char 
 JSValue JS_ThrowOutOfMemory(JSContext *ctx);
 
 void __JS_FreeValue(JSContext *ctx, JSValue v);
+
+static inline JSRefCountHeader *__js_rc(void *ptr)
+{
+    return (JSRefCountHeader *)((uint32_t *)ptr - 1);
+}
+
 static inline void JS_FreeValue(JSContext *ctx, JSValue v)
 {
     if (JS_VALUE_HAS_REF_COUNT(v)) {
-        JSRefCountHeader *p = (JSRefCountHeader *)JS_VALUE_GET_PTR(v);
+        JSRefCountHeader *p = __js_rc(JS_VALUE_GET_PTR(v));
         if (--p->ref_count <= 0) {
             __JS_FreeValue(ctx, v);
         }
@@ -717,7 +726,7 @@ void __JS_FreeValueRT(JSRuntime *rt, JSValue v);
 static inline void JS_FreeValueRT(JSRuntime *rt, JSValue v)
 {
     if (JS_VALUE_HAS_REF_COUNT(v)) {
-        JSRefCountHeader *p = (JSRefCountHeader *)JS_VALUE_GET_PTR(v);
+        JSRefCountHeader *p = __js_rc(JS_VALUE_GET_PTR(v));
         if (--p->ref_count <= 0) {
             __JS_FreeValueRT(rt, v);
         }
@@ -727,7 +736,7 @@ static inline void JS_FreeValueRT(JSRuntime *rt, JSValue v)
 static inline JSValue JS_DupValue(JSContext *ctx, JSValueConst v)
 {
     if (JS_VALUE_HAS_REF_COUNT(v)) {
-        JSRefCountHeader *p = (JSRefCountHeader *)JS_VALUE_GET_PTR(v);
+        JSRefCountHeader *p = __js_rc(JS_VALUE_GET_PTR(v));
         p->ref_count++;
     }
     return v;
@@ -736,7 +745,7 @@ static inline JSValue JS_DupValue(JSContext *ctx, JSValueConst v)
 static inline JSValue JS_DupValueRT(JSRuntime *rt, JSValueConst v)
 {
     if (JS_VALUE_HAS_REF_COUNT(v)) {
-        JSRefCountHeader *p = (JSRefCountHeader *)JS_VALUE_GET_PTR(v);
+        JSRefCountHeader *p = __js_rc(JS_VALUE_GET_PTR(v));
         p->ref_count++;
     }
     return v;
