@@ -43,11 +43,12 @@ JSValue js_std_await(JSContext *ctx, JSValue obj);
 int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
                      int argc, JSValueConst* argv, int64_t interval, int64_t delay, int magic);
 void js_std_clear_timer(JSRuntime* rt, int timer_id);
-/* return the delay of the upcoming timer */
-int js_std_timer_mindelay(JSRuntime* rt, int* state, int* magic);
+/* return the delay of the upcoming timer, thread safe */
+int js_std_timer_mindelay(JSRuntime* rt, int* magic);
+/* same as js_std_loop, thread safe, return < 0 if exception(get by js_std_thread_exception), 0 if no job pending, 1 if successfully. */
+int js_std_await_jobs(JSContext* ctx);
 /* return the pending exception or JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
 JSValue js_std_thread_exception(JSRuntime* rt);
-int js_std_await_jobs(JSContext* ctx);
 void js_std_init_handlers(JSRuntime *rt);
 void js_std_free_handlers(JSRuntime *rt);
 void js_std_dump_error(JSContext *ctx);

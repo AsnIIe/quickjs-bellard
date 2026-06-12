@@ -109,7 +109,6 @@ typedef struct {
 
 typedef struct {
     struct list_head link;
-    int state;/*0=idle,1=running*/
     int timer_id;
     int64_t timeout;
     JSValue func;
@@ -173,7 +172,8 @@ typedef struct JSThreadState {
 #if !defined(_WIN32)
     struct pollfd *poll_fds;
     int poll_fds_size;
-#endif    
+#endif
+    pthread_mutex_t mutex;/* for js_std_await_jobs */
     JSValue current_exception;
 } JSThreadState;
 
@@ -2539,7 +2539,6 @@ static int js_os_poll(JSContext *ctx)
             JSOSTimer *th = list_entry(el, JSOSTimer, link);
             delay = th->timeout - cur_time;
             if (delay <= 0) {
-                th->state = 1;/* change state to running */
                 /* the timer expired */
                 if (th->interval > 0) {
                     if (!call_handler(ctx, th->func, th->this_val, th->argc, th->argv)) {
@@ -2547,7 +2546,6 @@ static int js_os_poll(JSContext *ctx)
                         free_timer(rt, th);
                     } else {
                         th->timeout = cur_time + th->interval;
-                        th->state = 0;/* change state to idle */
                     }
                 } else {
                     if (!call_handler(ctx, th->func, th->this_val, th->argc, th->argv))
@@ -4312,6 +4310,9 @@ void js_std_init_handlers(JSRuntime *rt)
         JS_SetSharedArrayBufferFunctions(rt, &sf);
     }
 #endif
+
+    ts->current_exception = JS_UNINITIALIZED;
+    pthread_mutex_init(&ts->mutex, NULL);
 }
 
 void js_std_free_handlers(JSRuntime *rt)
@@ -4356,6 +4357,10 @@ void js_std_free_handlers(JSRuntime *rt)
 #if !defined(_WIN32)
     free(ts->poll_fds);
 #endif
+
+    /* free ts->current_exception */
+    JS_FreeValueRT(rt, ts->current_exception);
+    pthread_mutex_destroy(&ts->mutex);
 
     free(ts);
     JS_SetRuntimeOpaque(rt, NULL); /* fail safe */
@@ -4517,7 +4522,6 @@ int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
         ts->next_timer_id = 1;
     else
         ts->next_timer_id++;
-    th->state = 0;
     th->interval = interval;
     th->timeout = get_time_ms() + (delay >= 0 ? delay : 0);
     th->func = JS_DupValue(ctx, job_func);
@@ -4543,17 +4547,21 @@ void js_std_clear_timer(JSRuntime* rt, int timer_id) {
         free_timer(rt, th);
 }
 
-/* return the delay of the upcoming timer */
-int js_std_timer_mindelay(JSRuntime* rt, int* state, int* magic) {
+/* return the delay of the upcoming timer, thread safe */
+int js_std_timer_mindelay(JSRuntime* rt, int* magic) {
     JSThreadState* ts = JS_GetRuntimeOpaque(rt);
     if (!ts)
         return -1;
 
-    int min_delay;
+    // acquire mutex to protect thread-safe access to runtime/state
+    pthread_mutex_lock(&ts->mutex);
+
+    int min_delay = -1;
     int64_t cur_time, delay;
     struct list_head* el;
 
     if (JS_IsJobPending(rt)) {
+        pthread_mutex_unlock(&ts->mutex);
         return 0;
     }
     if (!list_empty(&ts->os_timers)) {
@@ -4565,14 +4573,69 @@ int js_std_timer_mindelay(JSRuntime* rt, int* state, int* magic) {
             if (delay < min_delay) {
                 if (magic)
                     *magic = th->magic;
-                if (state)
-                    *state = th->state;
                 min_delay = delay;
             }
         }
-        return min_delay < 0 ? 0 : min_delay;
+        min_delay = min_delay < 0 ? 0 : min_delay;
     }
-    return -1;
+    pthread_mutex_unlock(&ts->mutex);
+    return min_delay;
+}
+
+/* same as js_std_loop, thread safe, execute pending jobs once,
+   return < 0 if exception(get by js_std_thread_exception), 0 if no job pending, 1 if a job was
+   executed successfully. */
+int js_std_await_jobs(JSContext* ctx) {
+    JSRuntime* rt = JS_GetRuntime(ctx);
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    if (!ts)
+        return 0;
+
+    // acquire mutex to protect thread-safe access to runtime/state
+    pthread_mutex_lock(&ts->mutex);
+
+    /* execute the pending jobs */
+    for (;;) {
+        int rc = JS_ExecutePendingJob(JS_GetRuntime(ctx), NULL);
+        //exception
+        if (rc < 0) {
+            if (!JS_IsUninitialized(ts->current_exception))
+                JS_FreeValue(ctx, ts->current_exception);
+            ts->current_exception = JS_GetException(ctx);
+            pthread_mutex_unlock(&ts->mutex);
+            return -4;
+        }
+        //no more jobs
+        if (rc == 0)
+            break;
+    }
+
+    //like js_std_promise_rejection_check.
+    struct list_head* el = NULL;
+    JSRejectedPromiseEntry* rp = NULL;
+    list_for_each(el, &ts->rejected_promise_list) {
+        rp = list_entry(el, JSRejectedPromiseEntry, link);
+        break;
+    }
+    if (rp) {
+        if (!JS_IsUninitialized(ts->current_exception))
+            JS_FreeValue(ctx, ts->current_exception);
+        ts->current_exception = rp->reason;
+
+        JS_FreeValue(ctx, rp->promise);
+        list_del(&rp->link);
+        free(rp);
+        pthread_mutex_unlock(&ts->mutex);
+        return -5;
+    }
+
+    int rc = 1;
+    //os_poll_func return -4~0, -1 if no more jobs; 0 if successfully.
+    if (os_poll_func)
+        rc = os_poll_func(ctx) + 1;
+
+    pthread_mutex_unlock(&ts->mutex);
+    return rc;
 }
 
 /* return the pending exception or JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
@@ -4584,41 +4647,6 @@ JSValue js_std_thread_exception(JSRuntime* rt) {
     val = ts->current_exception;
     ts->current_exception = JS_UNINITIALIZED;
     return val;
-}
-
-/* same as js_std_loop, execute pending jobs once,
-   return < 0 if exception, 0 if no job pending, 1 if a job was
-   executed successfully. */
-int js_std_await_jobs(JSContext* ctx) {
-    int err = 0;
-
-    /* execute the pending jobs */
-    for (;;) {
-        err = JS_ExecutePendingJob(JS_GetRuntime(ctx), NULL);
-        if (err <= 0) {
-            if (err < 0)
-                js_std_dump_error_file(ctx, JS_GetException(ctx));
-            break;
-        }
-    }
-
-    //invoke js_std_promise_rejection_check(ctx) but don't exit.
-    JSRuntime* rt = JS_GetRuntime(ctx);
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
-    struct list_head* el;
-    if (unlikely(!list_empty(&ts->rejected_promise_list))) {
-        list_for_each(el, &ts->rejected_promise_list) {
-            JSRejectedPromiseEntry* rp = list_entry(el, JSRejectedPromiseEntry, link);
-            fprintf(stderr, "Possibly unhandled promise rejection: ");
-            js_std_dump_error_file(ctx, rp->reason);
-        }
-    }
-
-    if (os_poll_func)
-        os_poll_func(ctx);
-    else
-        err = -5;
-    return err + 1;
 }
 
 JSModuleDef* js_std_load_module(JSContext* ctx, const char* buf, size_t buf_len,
