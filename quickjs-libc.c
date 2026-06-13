@@ -159,6 +159,12 @@ typedef struct {
     JSValue reason;
 } JSRejectedPromiseEntry;
 
+typedef struct {
+    struct list_head link;
+    void (*poll)(void*);
+    void* data;
+} JSThreadPoll;
+
 typedef struct JSThreadState {
     struct list_head os_rw_handlers; /* list of JSOSRWHandler.link */
     struct list_head os_signal_handlers; /* list JSOSSignalHandler.link */
@@ -174,11 +180,12 @@ typedef struct JSThreadState {
     int poll_fds_size;
 #endif
     pthread_mutex_t mutex;/* for js_std_await_jobs */
+    struct list_head poll_list; /* list of JSThreadPoll.link */
     JSValue current_exception;
 } JSThreadState;
 
 static uint64_t os_pending_signals;
-static int (*os_poll_func)(JSContext *ctx);
+static int (*os_poll_func)(JSContext *ctx, JS_BOOL sleep);/* If sleep is TRUE, Invoke Sleep(min_delay) */
 
 static void js_std_dbuf_init(JSContext *ctx, DynBuf *s)
 {
@@ -2515,7 +2522,7 @@ static int handle_posted_message(JSRuntime *rt, JSContext *ctx,
 
 #if defined(_WIN32)
 
-static int js_os_poll(JSContext *ctx)
+static int js_os_poll(JSContext *ctx, JS_BOOL sleep)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
     JSThreadState *ts = JS_GetRuntimeOpaque(rt);
@@ -2524,6 +2531,13 @@ static int js_os_poll(JSContext *ctx)
     JSOSRWHandler *rh;
     struct list_head *el;
     HANDLE handles[MAXIMUM_WAIT_OBJECTS]; // 64
+
+    /* call ts->poll_list every times */
+    list_for_each(el, &ts->poll_list) {
+        JSThreadPoll* tp = list_entry(el, JSThreadPoll, link);
+        if (tp->poll)
+            tp->poll(tp->data);
+    }
 
     /* XXX: handle signals if useful */
 
@@ -2609,7 +2623,8 @@ static int js_os_poll(JSContext *ctx)
             }
         }
     } else {
-        Sleep(min_delay);
+        if(sleep)
+            Sleep(min_delay);
     }
  done:
     return rc;
@@ -4313,6 +4328,7 @@ void js_std_init_handlers(JSRuntime *rt)
 
     ts->current_exception = JS_UNINITIALIZED;
     pthread_mutex_init(&ts->mutex, NULL);
+    init_list_head(&ts->poll_list);
 }
 
 void js_std_free_handlers(JSRuntime *rt)
@@ -4361,6 +4377,11 @@ void js_std_free_handlers(JSRuntime *rt)
     /* free ts->current_exception */
     JS_FreeValueRT(rt, ts->current_exception);
     pthread_mutex_destroy(&ts->mutex);
+
+    list_for_each_safe(el, el1, &ts->poll_list) {
+        JSThreadPoll* tp = list_entry(el, JSThreadPoll, link);
+        free(tp);
+    }
 
     free(ts);
     JS_SetRuntimeOpaque(rt, NULL); /* fail safe */
@@ -4457,7 +4478,7 @@ void js_std_loop(JSContext *ctx)
 
         js_std_promise_rejection_check(ctx);
         
-        if (!os_poll_func || os_poll_func(ctx))
+        if (!os_poll_func || os_poll_func(ctx, TRUE))
             break;
     }
 }
@@ -4490,7 +4511,7 @@ JSValue js_std_await(JSContext *ctx, JSValue obj)
                 js_std_promise_rejection_check(ctx);
 
                 if (os_poll_func)
-                    os_poll_func(ctx);
+                    os_poll_func(ctx, TRUE);
             }
         } else {
             /* not a promise */
@@ -4632,7 +4653,7 @@ int js_std_await_jobs(JSContext* ctx) {
     int rc = 1;
     //os_poll_func return -4~0, -1 if no more jobs; 0 if successfully.
     if (os_poll_func)
-        rc = os_poll_func(ctx) + 1;
+        rc = os_poll_func(ctx, FALSE) + 1;/* must invoke Sleep(min_delay) by user */
 
     pthread_mutex_unlock(&ts->mutex);
     return rc;
@@ -4647,6 +4668,87 @@ JSValue js_std_thread_exception(JSRuntime* rt) {
     val = ts->current_exception;
     ts->current_exception = JS_UNINITIALIZED;
     return val;
+}
+
+/* add polling function, thread safe */
+JS_BOOL js_thread_set_poll(JSRuntime* rt, void (*poll_func)(void*), void* data) {
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadPoll* tp;
+    if (!ts || !poll_func)
+        return FALSE;
+
+    tp = malloc(sizeof(*tp));
+    if (!tp) {
+        return FALSE;
+    }
+    tp->poll = poll_func;
+    tp->data = data;
+    
+    pthread_mutex_lock(&ts->mutex);
+    list_add_tail(&tp->link, &ts->poll_list);
+    pthread_mutex_unlock(&ts->mutex);
+    return TRUE;
+}
+
+/* delete polling function, thread safe */
+void js_thread_del_poll(JSRuntime* rt, void (*poll_func)(void*)) {
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    if (!ts)
+        return;
+    
+    pthread_mutex_lock(&ts->mutex);
+    struct list_head* el;
+    JSThreadPoll* tp = NULL;
+    list_for_each(el, &ts->poll_list) {
+        JSThreadPoll* tp1 = list_entry(el, JSThreadPoll, link);
+        if (tp1->poll == poll_func) {
+            tp = tp1;
+            break;
+        }
+    }
+    if (tp) {
+        list_del(&tp->link);
+        free(tp);
+    }
+    pthread_mutex_unlock(&ts->mutex);
+}
+
+/* execute all polling functions, thread safe */
+void js_thread_poll(JSRuntime* rt) {
+    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    if (!ts)
+        return;
+    pthread_mutex_lock(&ts->mutex);
+    struct list_head* el;
+    list_for_each(el, &ts->poll_list) {
+        JSThreadPoll* tp = list_entry(el, JSThreadPoll, link);
+        if (tp->poll)
+            tp->poll(tp->data);
+    }
+    pthread_mutex_unlock(&ts->mutex);
+}
+
+/* use pthread_create to compatible with WIN32, return pthread_t*, must free by user */
+void* js_thread_create(void* (*thread_func)(void*), void* arg) {
+    pthread_t* tid = malloc(sizeof(pthread_t));
+    if (!tid)
+        return NULL;
+    int rc = pthread_create(tid, NULL, thread_func, NULL);
+    if (rc == 0)
+        return tid;
+    free(tid);
+    return NULL;
+}
+
+/* exit thread, by use pthread_cancel and pthread_detach to compatible with WIN32*/
+int js_thread_exit(void* ptid) {
+    if (!ptid)
+        return -1;
+    pthread_t tid = *(pthread_t*)ptid;
+    int rc = pthread_cancel(tid);
+    if (rc == 0)
+        rc = pthread_detach(tid);
+    return rc;
 }
 
 JSModuleDef* js_std_load_module(JSContext* ctx, const char* buf, size_t buf_len,

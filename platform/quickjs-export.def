@@ -233,3 +233,8 @@ JS_FreezeObject
 JS_GetOpaque3
 js_std_timer_mindelay
 js_std_thread_exception
+js_thread_set_poll
+js_thread_del_poll
+js_thread_poll
+js_thread_create
+js_thread_exit
