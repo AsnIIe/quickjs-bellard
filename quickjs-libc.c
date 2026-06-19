@@ -511,31 +511,25 @@ typedef JSModuleDef *(JSInitModuleFunc)(JSContext *ctx,
 
 
 #if defined(_WIN32)
-#include "./platform/libraryloader.h"
+#include "./platform/dynamic-resolver.h"
 
-static JSModuleDef* js_module_loader_so(JSContext* ctx,
-                                        const char* module_name) {
+static JSModuleDef* js_module_loader_dll(JSContext* ctx,
+                                        const char* module_name,
+                                        const char* file_name,
+                                        const char* method_name) {
     JSModuleDef* m;
     JSInitModuleFunc* init_func;
 
-    char fileName[MAX_PATH] = { 0 };
-    char entryName[MAX_PATH] = { 0 };
-
-    char origin_module_name[MAX_PATH] = { 0 };
-    dynamic_u82a(module_name, origin_module_name);
-
-    dynamic_resolve(origin_module_name, JS_MODULE_PATH, fileName, entryName);
-
-    HMODULE hd = LoadLibraryA(fileName);
+    HMODULE hd = LoadLibraryA(file_name);
     if (!hd) {
-        JS_ThrowReferenceError(ctx, "could not load module filename '%s' as shared library", fileName);
+        JS_ThrowReferenceError(ctx, "could not load module filename '%s' as shared library", file_name);
         goto fail;
     }
 
-    init_func = (JSInitModuleFunc*)GetProcAddress(hd, entryName);
+    init_func = (JSInitModuleFunc*)GetProcAddress(hd, method_name);
     if (!init_func) {
         JS_ThrowReferenceError(ctx, "could not load module filename '%s': '%s' not found",
-                               fileName, entryName);
+                               file_name, method_name);
         goto fail;
     }
 
@@ -745,11 +739,19 @@ JSModuleDef *js_module_loader(JSContext *ctx,
     int res;
     
 #if defined(_WIN32)
-    if (dynamic_IsValidPEFile(module_name)) {
+    char file[MAX_PATH] = { 0 };
+    char method[MAX_PATH] = { 0 };
+    dynamic_resolve(module_name, (const char*)opaque, file, method);
+    
+    char fileA[MAX_PATH] = { 0 };
+    dynamic_u82a(file, fileA);
+    
+    if (dynamic_IsValidPEFile(fileA)) {
+        m = js_module_loader_dll(ctx, module_name, fileA, method);
 #else
     if (has_suffix(module_name, ".so")) {
-#endif
         m = js_module_loader_so(ctx, module_name);
+#endif
     } else {
         size_t buf_len;
         uint8_t *buf;
@@ -4754,13 +4756,7 @@ int js_thread_exit(void* ptid) {
 JSModuleDef* js_std_load_module(JSContext* ctx, const char* buf, size_t buf_len,
                                 const char* module_name)
 {
-    JSModuleDef* m;
-    JSAtom name = JS_NewAtom(ctx, module_name);
-    m = JS_FindModule(ctx, name);
-    JS_FreeAtom(ctx, name);
-    if (m) {
-        return m;
-    }
+    JSModuleDef* m = NULL;
     
     if (!buf) {
         JS_ThrowReferenceError(ctx, "the buffer of module is NULL");

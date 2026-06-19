@@ -75,7 +75,7 @@ project "libruntime"
 
 		"platform/dirent.h",
 		"platform/getopt.h",
-		"platform/libraryloader.h",
+		"platform/dynamic-resolver.h",
 
 		"cutils.c",
 		"libregexp.c",
@@ -107,7 +107,7 @@ project "libquickjs"
 
 		"platform/dirent.h",
 		"platform/getopt.h",
-		"platform/libraryloader.h",
+		"platform/dynamic-resolver.h",
 
 		"cutils.c",
 		"libregexp.c",
