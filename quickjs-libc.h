@@ -53,10 +53,6 @@ JS_BOOL js_thread_set_poll(JSRuntime* rt, void (*poll_func)(void*), void* data);
 void js_thread_del_poll(JSRuntime* rt, void (*poll_func)(void*));
 /* execute all polling functions */
 void js_thread_poll(JSRuntime* rt);
-/* use pthread_create to compatible with WIN32, return pthread_t*, must free by user */
-void* js_thread_create(void* (*thread_func)(void*), void* arg);
-/* exit thread, by use pthread_cancel and pthread_detach to compatible with WIN32 */
-int js_thread_exit(void* ptid);
 void js_std_init_handlers(JSRuntime *rt);
 void js_std_free_handlers(JSRuntime *rt);
 void js_std_dump_error(JSContext *ctx);

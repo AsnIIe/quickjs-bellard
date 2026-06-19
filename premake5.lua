@@ -13,6 +13,7 @@ workspace "quickjs-bellard"
 	platforms { "x86", "x64"  } 
 
 	defines { "CONFIG_VERSION=\""..ver.."\"" }
+	defines { "USE_WORKER" }
 
 	-- Configuration settings
 	configurations { "Debug", "Release" }
@@ -34,6 +35,7 @@ workspace "quickjs-bellard"
 		defines { "NDEBUG" }
 		optimize "Speed"
 		inlining "Auto"
+		flags { "LinkTimeOptimization" }
 
 	filter { "language:not C#" }
 		defines { "_CRT_SECURE_NO_WARNINGS" }
@@ -55,7 +57,8 @@ workspace "quickjs-bellard"
 	filter "system:windows"
         links { "libwinpthread%{cfg.platform}.lib" }
 -----------------------------------------------------------------------------------------------------------------------
-project "libruntime"
+-- lib ECMAScript
+project "libes"
 	language "C"
 	kind "SharedLib"
 	files {
@@ -117,12 +120,12 @@ project "libquickjs"
 		"dtoa.c"
 	}
 	targetdir "build/lib/%{cfg.buildcfg}"
-	targetname "%{prj.name}_%{cfg.platform}"
+	targetname "%{prj.name}%{cfg.platform}"
 -----------------------------------------------------------------------------------------------------------------------
 project "examples"
 	language "C"
 	kind "ConsoleApp"
-	links { "libruntime" }
+	links { "libes" }
 	files {
 		"examples/main.cpp"
 	}
@@ -130,7 +133,7 @@ project "examples"
 project "qjsc"
 	language "C"
 	kind "ConsoleApp"
-	links { "libruntime" }
+	links { "libes" }
 	files {
 		"qjsc.c"
 	}
@@ -138,7 +141,7 @@ project "qjsc"
 project "qjs"
 	language "C"
 	kind "ConsoleApp"
-	links { "libruntime" }
+	links { "libes" }
 	dependson { "qjsc" }
 	files {
 		"qjs.c",

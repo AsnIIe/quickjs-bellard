@@ -236,5 +236,3 @@ js_std_thread_exception
 js_thread_set_poll
 js_thread_del_poll
 js_thread_poll
-js_thread_create
-js_thread_exit

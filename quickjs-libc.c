@@ -38,9 +38,7 @@
 #include <windows.h>
 #include <conio.h>
 #include <io.h>
-#include <fcntl.h>
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <sys/utime.h>
 #include "platform/dirent.h"
 #define popen _popen
@@ -70,16 +68,16 @@ typedef sig_t sighandler_t;
 #endif
 
 /* enable the os.Worker API. It relies on POSIX threads */
-#define USE_WORKER
+// #define USE_WORKER
 
-#ifdef USE_WORKER
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(USE_WORKER)
 #include "thirdparty/pthread/pthread.h"
 #include "platform/stdatomic.h"
-#else
+#endif
+
+#if !defined(_WIN32)
 #include <pthread.h>
 #include <stdatomic.h>
-#endif
 #endif
 
 #include "cutils.h"
@@ -178,8 +176,10 @@ typedef struct JSThreadState {
 #if !defined(_WIN32)
     struct pollfd *poll_fds;
     int poll_fds_size;
-#endif
     pthread_mutex_t mutex;/* for js_std_await_jobs */
+#else
+    CRITICAL_SECTION cs;/* for js_std_await_jobs */
+#endif
     struct list_head poll_list; /* list of JSThreadPoll.link */
     JSValue current_exception;
 } JSThreadState;
@@ -4329,7 +4329,11 @@ void js_std_init_handlers(JSRuntime *rt)
 #endif
 
     ts->current_exception = JS_UNINITIALIZED;
+#if !defined(_WIN32)
     pthread_mutex_init(&ts->mutex, NULL);
+#else
+    InitializeCriticalSection(&ts->cs);
+#endif
     init_list_head(&ts->poll_list);
 }
 
@@ -4378,7 +4382,11 @@ void js_std_free_handlers(JSRuntime *rt)
 
     /* free ts->current_exception */
     JS_FreeValueRT(rt, ts->current_exception);
+#if !defined(_WIN32)
     pthread_mutex_destroy(&ts->mutex);
+#else
+    DeleteCriticalSection(&ts->cs);
+#endif
 
     list_for_each_safe(el, el1, &ts->poll_list) {
         JSThreadPoll* tp = list_entry(el, JSThreadPoll, link);
@@ -4577,14 +4585,22 @@ int js_std_timer_mindelay(JSRuntime* rt, int* magic) {
         return -1;
 
     // acquire mutex to protect thread-safe access to runtime/state
+#if !defined(_WIN32)
     pthread_mutex_lock(&ts->mutex);
+#else
+    EnterCriticalSection(&ts->cs);
+#endif
 
     int min_delay = -1;
     int64_t cur_time, delay;
     struct list_head* el;
 
     if (JS_IsJobPending(rt)) {
+#if !defined(_WIN32)
         pthread_mutex_unlock(&ts->mutex);
+#else
+        LeaveCriticalSection(&ts->cs);
+#endif
         return 0;
     }
     if (!list_empty(&ts->os_timers)) {
@@ -4601,7 +4617,11 @@ int js_std_timer_mindelay(JSRuntime* rt, int* magic) {
         }
         min_delay = min_delay < 0 ? 0 : min_delay;
     }
+#if !defined(_WIN32)
     pthread_mutex_unlock(&ts->mutex);
+#else
+    LeaveCriticalSection(&ts->cs);
+#endif
     return min_delay;
 }
 
@@ -4615,7 +4635,11 @@ int js_std_await_jobs(JSContext* ctx) {
         return 0;
 
     // acquire mutex to protect thread-safe access to runtime/state
+#if !defined(_WIN32)
     pthread_mutex_lock(&ts->mutex);
+#else
+    EnterCriticalSection(&ts->cs);
+#endif
 
     /* execute the pending jobs */
     for (;;) {
@@ -4625,7 +4649,11 @@ int js_std_await_jobs(JSContext* ctx) {
             if (!JS_IsUninitialized(ts->current_exception))
                 JS_FreeValue(ctx, ts->current_exception);
             ts->current_exception = JS_GetException(ctx);
+#if !defined(_WIN32)
             pthread_mutex_unlock(&ts->mutex);
+#else
+            LeaveCriticalSection(&ts->cs);
+#endif
             return -4;
         }
         //no more jobs
@@ -4648,7 +4676,11 @@ int js_std_await_jobs(JSContext* ctx) {
         JS_FreeValue(ctx, rp->promise);
         list_del(&rp->link);
         free(rp);
+#if !defined(_WIN32)
         pthread_mutex_unlock(&ts->mutex);
+#else
+        LeaveCriticalSection(&ts->cs);
+#endif
         return -5;
     }
 
@@ -4657,7 +4689,11 @@ int js_std_await_jobs(JSContext* ctx) {
     if (os_poll_func)
         rc = os_poll_func(ctx, FALSE) + 1;/* must invoke Sleep(min_delay) by user */
 
+#if !defined(_WIN32)
     pthread_mutex_unlock(&ts->mutex);
+#else
+    LeaveCriticalSection(&ts->cs);
+#endif
     return rc;
 }
 
@@ -4686,9 +4722,19 @@ JS_BOOL js_thread_set_poll(JSRuntime* rt, void (*poll_func)(void*), void* data) 
     tp->poll = poll_func;
     tp->data = data;
     
+#if !defined(_WIN32)
     pthread_mutex_lock(&ts->mutex);
+#else
+    EnterCriticalSection(&ts->cs);
+#endif
+
     list_add_tail(&tp->link, &ts->poll_list);
+
+#if !defined(_WIN32)
     pthread_mutex_unlock(&ts->mutex);
+#else
+    LeaveCriticalSection(&ts->cs);
+#endif
     return TRUE;
 }
 
@@ -4698,7 +4744,11 @@ void js_thread_del_poll(JSRuntime* rt, void (*poll_func)(void*)) {
     if (!ts)
         return;
     
+#if !defined(_WIN32)
     pthread_mutex_lock(&ts->mutex);
+#else
+    EnterCriticalSection(&ts->cs);
+#endif
     struct list_head* el;
     JSThreadPoll* tp = NULL;
     list_for_each(el, &ts->poll_list) {
@@ -4712,7 +4762,11 @@ void js_thread_del_poll(JSRuntime* rt, void (*poll_func)(void*)) {
         list_del(&tp->link);
         free(tp);
     }
+#if !defined(_WIN32)
     pthread_mutex_unlock(&ts->mutex);
+#else
+    LeaveCriticalSection(&ts->cs);
+#endif
 }
 
 /* execute all polling functions, thread safe */
@@ -4720,37 +4774,22 @@ void js_thread_poll(JSRuntime* rt) {
     JSThreadState* ts = JS_GetRuntimeOpaque(rt);
     if (!ts)
         return;
+#if !defined(_WIN32)
     pthread_mutex_lock(&ts->mutex);
+#else
+    EnterCriticalSection(&ts->cs);
+#endif
     struct list_head* el;
     list_for_each(el, &ts->poll_list) {
         JSThreadPoll* tp = list_entry(el, JSThreadPoll, link);
         if (tp->poll)
             tp->poll(tp->data);
     }
+#if !defined(_WIN32)
     pthread_mutex_unlock(&ts->mutex);
-}
-
-/* use pthread_create to compatible with WIN32, return pthread_t*, must free by user */
-void* js_thread_create(void* (*thread_func)(void*), void* arg) {
-    pthread_t* tid = malloc(sizeof(pthread_t));
-    if (!tid)
-        return NULL;
-    int rc = pthread_create(tid, NULL, thread_func, NULL);
-    if (rc == 0)
-        return tid;
-    free(tid);
-    return NULL;
-}
-
-/* exit thread, by use pthread_cancel and pthread_detach to compatible with WIN32*/
-int js_thread_exit(void* ptid) {
-    if (!ptid)
-        return -1;
-    pthread_t tid = *(pthread_t*)ptid;
-    int rc = pthread_cancel(tid);
-    if (rc == 0)
-        rc = pthread_detach(tid);
-    return rc;
+#else
+    LeaveCriticalSection(&ts->cs);
+#endif
 }
 
 JSModuleDef* js_std_load_module(JSContext* ctx, const char* buf, size_t buf_len,
