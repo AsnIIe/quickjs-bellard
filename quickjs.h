@@ -753,6 +753,7 @@ static inline JSValue JS_DupValueRT(JSRuntime *rt, JSValueConst v)
 
 JS_BOOL JS_StrictEq(JSContext *ctx, JSValueConst op1, JSValueConst op2);
 JS_BOOL JS_SameValue(JSContext *ctx, JSValueConst op1, JSValueConst op2);
+/* Similar to same-value equality, but +0 and -0 are considered equal. */
 JS_BOOL JS_SameValueZero(JSContext *ctx, JSValueConst op1, JSValueConst op2);
 
 int JS_ToBool(JSContext *ctx, JSValueConst val); /* return -1 for JS_EXCEPTION */
@@ -1422,6 +1423,10 @@ typedef void JSPromiseHook(JSContext* ctx, JSPromiseHookType type,
                            void* opaque);
 void JS_SetPromiseHook(JSRuntime* rt, JSPromiseHook promise_hook,
                            void* opaque);
+
+JS_BOOL JS_IsProxy(JSValueConst val);
+JSValue JS_NewProxy(JSContext* ctx, JSValueConst target,
+                    JSValueConst handler);
 
 #undef js_unlikely
 #undef js_force_inline

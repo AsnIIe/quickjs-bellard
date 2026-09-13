@@ -239,3 +239,5 @@ JS_IsPromise
 JS_PromiseMarkAsHandled
 JS_NewSettledPromise
 JS_PromiseThen
+JS_IsProxy
+JS_NewProxy

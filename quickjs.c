@@ -61764,3 +61764,36 @@ void JS_SetPromiseHook(JSRuntime* rt, JSPromiseHook promise_hook, void* opaque) 
     rt->promise_hook = promise_hook;
     rt->promise_hook_opaque = opaque;
 }
+
+JS_BOOL JS_IsProxy(JSValueConst val) {
+    if (JS_VALUE_GET_TAG(val) == JS_TAG_OBJECT) {
+        JSObject* p = JS_VALUE_GET_OBJ(val);
+        return p->class_id == JS_CLASS_PROXY;
+    }
+    return FALSE;
+}
+
+JSValue JS_NewProxy(JSContext* ctx, JSValueConst target, JSValueConst handler) {
+    JSProxyData* s;
+    JSValue obj;
+
+    if (JS_VALUE_GET_TAG(target) != JS_TAG_OBJECT ||
+        JS_VALUE_GET_TAG(handler) != JS_TAG_OBJECT) {
+        return JS_ThrowTypeErrorNotAnObject(ctx);
+    }
+    obj = JS_NewObjectProtoClass(ctx, JS_NULL, JS_CLASS_PROXY);
+    if (JS_IsException(obj))
+        return obj;
+    s = js_malloc(ctx, sizeof(*s));
+    if (!s) {
+        JS_FreeValue(ctx, obj);
+        return JS_EXCEPTION;
+    }
+    s->target = JS_DupValue(ctx, target);
+    s->handler = JS_DupValue(ctx, handler);
+    s->is_func = JS_IsFunction(ctx, target);
+    s->is_revoked = FALSE;
+    JS_SetOpaque(obj, s);
+    JS_SetConstructorBit(ctx, obj, JS_IsConstructor(ctx, target));
+    return obj;
+}
