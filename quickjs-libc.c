@@ -43,6 +43,16 @@
 #include "platform/dirent.h"
 #define popen _popen
 #define pclose _pclose
+#define strdup _strdup
+#define unlink _unlink
+#define fdopen _fdopen
+#define fileno _fileno
+#define open _open
+#define close _close
+#define lseek _lseek
+#define isatty _isatty
+#define read _read
+#define write _write
 #else
 #include <dlfcn.h>
 #include <termios.h>
@@ -4767,7 +4777,7 @@ JS_BOOL js_std_set_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*), void* da
 void* js_std_del_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*)) {
     JSThreadState* ts = JS_GetRuntimeOpaque(rt);
     if (!ts)
-        return;
+        return NULL;
 
 #if !defined(_WIN32)
     pthread_mutex_lock(&ts->mutex);

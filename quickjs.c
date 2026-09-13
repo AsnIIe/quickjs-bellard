@@ -50873,7 +50873,7 @@ static int js_proxy_has(JSContext *ctx, JSValueConst obj, JSAtom atom)
 }
 
 static JSValue js_proxy_get(JSContext *ctx, JSValueConst obj, JSAtom atom,
-                            JSValueConst receiver)
+                            JSValueConst receiver, JS_BOOL * skip)
 {
     JSProxyData *s;
     JSValue method, ret, atom_val;
