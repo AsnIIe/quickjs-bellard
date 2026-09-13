@@ -241,3 +241,4 @@ JS_NewSettledPromise
 JS_PromiseThen
 JS_IsProxy
 JS_NewProxy
+JS_AddRuntimeFinalizer

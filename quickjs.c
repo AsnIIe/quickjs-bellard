@@ -322,6 +322,12 @@ typedef struct {
 
 /* end JS Malloc */
 
+typedef struct JSRuntimeFinalizerState {
+    struct JSRuntimeFinalizerState* next;
+    JSRuntimeFinalizer* finalizer;
+    void* arg;
+} JSRuntimeFinalizerState;
+
 typedef struct JSValueLink {
     struct JSValueLink* next;
     JSValueConst value;
@@ -406,6 +412,7 @@ struct JSRuntime {
     int shape_hash_count; /* number of hashed shapes */
     JSShape **shape_hash;
     void *user_opaque;
+    JSRuntimeFinalizerState* finalizers;
 };
 
 struct JSClass {
@@ -2627,6 +2634,13 @@ void JS_FreeRuntime(JSRuntime *rt)
         }
     }
 #endif
+
+    while (rt->finalizers) {
+        JSRuntimeFinalizerState* fs = rt->finalizers;
+        rt->finalizers = fs->next;
+        fs->finalizer(rt, fs->arg);
+        js_free_rt(rt, fs);
+    }
 
     {
         JSMallocState ms = rt->malloc_ctx.malloc_state;
@@ -61796,4 +61810,16 @@ JSValue JS_NewProxy(JSContext* ctx, JSValueConst target, JSValueConst handler) {
     JS_SetOpaque(obj, s);
     JS_SetConstructorBit(ctx, obj, JS_IsConstructor(ctx, target));
     return obj;
+}
+
+int JS_AddRuntimeFinalizer(JSRuntime* rt, JSRuntimeFinalizer* finalizer,
+                           void* arg) {
+    JSRuntimeFinalizerState* fs = js_malloc_rt(rt, sizeof(*fs));
+    if (!fs)
+        return -1;
+    fs->next = rt->finalizers;
+    fs->finalizer = finalizer;
+    fs->arg = arg;
+    rt->finalizers = fs;
+    return 0;
 }

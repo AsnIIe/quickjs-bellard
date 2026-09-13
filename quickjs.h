@@ -1428,6 +1428,15 @@ JS_BOOL JS_IsProxy(JSValueConst val);
 JSValue JS_NewProxy(JSContext* ctx, JSValueConst target,
                     JSValueConst handler);
 
+/* 
+    Finalizers run in LIFO order at the very end of JS_FreeRuntime.
+    Intended for cleanup of associated resources; the runtime itself
+    is no longer usable.
+*/
+typedef void JSRuntimeFinalizer(JSRuntime*, void*);
+int JS_AddRuntimeFinalizer(JSRuntime* rt,
+                           JSRuntimeFinalizer* finalizer, void* arg);
+
 #undef js_unlikely
 #undef js_force_inline
 
