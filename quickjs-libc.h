@@ -29,8 +29,6 @@
 
 #include "quickjs.h"
 
-extern JSClassID js_worker_class_id;
-
 #ifdef __cplusplus
 extern "C" {
 #endif

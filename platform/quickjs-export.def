@@ -243,3 +243,4 @@ JS_NewProxy
 JS_AddRuntimeFinalizer
 JS_SetRuntimeThreadLocal
 JS_GetRuntimeThreadLocal
+JS_GetClassID2

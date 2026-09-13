@@ -3608,7 +3608,7 @@ typedef struct {
     uint64_t buf[0];
 } JSSABHeader;
 
-JSClassID js_worker_class_id;
+static JSClassID js_worker_class_id;
 static JSContext *(*js_worker_new_context_func)(JSRuntime *rt);
 
 static int atomic_add_int(int *ptr, int v)
@@ -4173,7 +4173,6 @@ static JSValue js_os_create_Worker_class(JSContext* ctx) {
     obj = JS_NewCFunction2(ctx, js_worker_ctor, "Worker", 1,
                            JS_CFUNC_constructor, 0);
     JS_SetConstructor(ctx, obj, proto);
-
     JS_SetClassProto(ctx, js_worker_class_id, proto);
 
     /* set 'globalThis.self' if necessary */

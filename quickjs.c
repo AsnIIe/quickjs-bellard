@@ -61593,12 +61593,29 @@ JSValue JS_GetClassConstructor(JSContext* ctx, JSClassID class_id) {
     }
 }
 
-JSAtom JS_GetClassName(JSRuntime* rt, JSClassID class_id) {
+JSAtom JS_GetClassName(JSContext* ctx, JSClassID class_id) {
+    JSRuntime* rt = ctx->rt;
     if (JS_IsRegisteredClass(rt, class_id)) {
-        return JS_DupAtomRT(rt, rt->class_array[class_id].class_id);
+        return JS_DupAtomRT(rt, rt->class_array[class_id].class_name);
     } else {
         return JS_ATOM_NULL;
     }
+}
+
+JSClassID JS_GetClassID2(JSContext* ctx, const char* class_name) {
+    if (!class_name)
+        return JS_INVALID_CLASS_ID;
+    JSRuntime* rt = ctx->rt;
+    JSClassID class_id = JS_INVALID_CLASS_ID;
+    JSAtom name = JS_NewAtom(ctx, class_name);
+    for (size_t i = 0; i < rt->class_count; i++) {
+        if (rt->class_array[i].class_name == name) {
+            class_id = rt->class_array[i].class_id;
+            break;
+        }
+    }
+    JS_FreeAtom(ctx, name);
+    return class_id;
 }
 
 JSValue JS_GetModuleExportItem(JSContext* ctx, JSModuleDef* m, JSAtom atom) {

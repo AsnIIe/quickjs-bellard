@@ -1,4 +1,4 @@
-/*
+﻿/*
  * QuickJS stand alone interpreter
  *
  * Copyright (c) 2017-2021 Fabrice Bellard
@@ -290,6 +290,28 @@ static size_t get_suffixed_size(const char *str)
     return v;
 }
 
+static void js_print_value_write(void* opaque, const char* buf, size_t len) {
+    FILE* fo = opaque;
+    fwrite(buf, 1, len, fo);
+}
+
+static void js_qjs_dump_error(JSContext* ctx, JSValueConst exception_val) {
+    JS_PrintValue(ctx, js_print_value_write, stderr, exception_val, NULL);
+    fputc('\n', stderr);
+}
+
+static void js_qjs_loop(JSContext* ctx)
+{
+    int ret = 0;
+    while (ret = js_std_await_jobs(ctx)) {
+        if (ret < 0) {
+            JSValue err = js_std_jobs_exception(JS_GetRuntime(ctx));
+            js_qjs_dump_error(ctx, err);
+            JS_FreeValue(ctx, err);
+        }
+    }
+}
+
 #define PROG_NAME "qjs"
 
 void help(void)
@@ -527,7 +549,7 @@ int main(int argc, char **argv)
             JS_SetHostPromiseRejectionTracker(rt, NULL, NULL);
             js_std_eval_binary(ctx, qjsc_repl, qjsc_repl_size, 0);
         }
-        js_std_loop(ctx);
+        js_qjs_loop(ctx);
     }
 
     if (dump_memory) {

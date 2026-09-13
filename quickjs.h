@@ -1366,10 +1366,14 @@ void JS_RecoverySnapshot(JSRuntime* rt, const JSRuntimeStackSnapshot* state);
 JS_BOOL JS_IsDate(JSContext* ctx, JSValueConst obj, double* ms_since_1970);
 
 JSValue JS_GetClassConstructor(JSContext* ctx, JSClassID class_id);
-JSAtom JS_GetClassName(JSRuntime* rt, JSClassID class_id);
+JSAtom JS_GetClassName(JSContext* ctx, JSClassID class_id);
+/* Returns the class ID if `name` of class is registered, otherwise returns JS_INVALID_CLASS_ID. */
+JSClassID JS_GetClassID2(JSContext* ctx, const char* class_name);
 
 JSValue JS_GetModuleExportItem(JSContext* ctx, JSModuleDef* m, JSAtom atom);
 static inline JSValue JS_GetModuleExportItemStr(JSContext* ctx, JSModuleDef* m, const char* name) {
+    if (!name)
+        return JS_UNDEFINED;
     JSAtom atom = JS_NewAtom(ctx, name);
     JSValue rv = JS_GetModuleExportItem(ctx, m, atom);
     JS_FreeAtom(ctx, atom);
