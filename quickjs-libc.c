@@ -2360,6 +2360,13 @@ static void js_std_dump_error_file(JSContext* ctx, JSValueConst exception_val) {
     fclose(fp);
 }
 
+static void js_set_jobs_exception(JSRuntime* rt, JSValue exception) {
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
+    if (!JS_IsUninitialized(ts->current_exception))
+        JS_FreeValueRT(rt, ts->current_exception);
+    ts->current_exception = exception;
+}
+
 static JS_BOOL call_handler(JSContext *ctx, JSValueConst func, JSValueConst this_val,
                          int argc, JSValueConst* argv)
 {
@@ -2378,9 +2385,7 @@ static JS_BOOL call_handler(JSContext *ctx, JSValueConst func, JSValueConst this
     ret = JS_Call(ctx, func1, this_val, argc, argv);
     JS_FreeValue(ctx, func1);
     if (JS_IsException(ret)) {
-        if (!JS_IsUninitialized(ts->current_exception))
-            JS_FreeValue(ctx, ts->current_exception);
-        ts->current_exception = JS_GetException(ctx);
+        js_set_jobs_exception(rt, JS_GetException(ctx));
         js_std_dump_error1(ctx, ts->current_exception);
         
         JS_RecoverySnapshot(rt, &snapshot);
@@ -4504,7 +4509,7 @@ JSValue js_std_await(JSContext *ctx, JSValue obj)
 {
     JSValue ret;
     int state;
-
+    
     for(;;) {
         state = JS_PromiseState(ctx, obj);
         if (state == JS_PROMISE_FULFILLED) {
@@ -4525,7 +4530,7 @@ JSValue js_std_await(JSContext *ctx, JSValue obj)
                 js_std_promise_rejection_check(ctx);
 
                 if (os_poll_func)
-                    os_poll_func(ctx, TRUE);
+                    os_poll_func(ctx, FALSE);
             }
         } else {
             /* not a promise */
@@ -4661,9 +4666,7 @@ int js_std_await_jobs(JSContext* ctx) {
         int rc = JS_ExecutePendingJob(JS_GetRuntime(ctx), NULL);
         //exception
         if (rc < 0) {
-            if (!JS_IsUninitialized(ts->current_exception))
-                JS_FreeValue(ctx, ts->current_exception);
-            ts->current_exception = JS_GetException(ctx);
+            js_set_jobs_exception(rt, JS_GetException(ctx));
 #if !defined(_WIN32)
             pthread_mutex_unlock(&ts->mutex);
 #else
@@ -4683,14 +4686,8 @@ int js_std_await_jobs(JSContext* ctx) {
         break;
     }
     if (rp) {
-        if (!JS_IsUninitialized(ts->current_exception))
-            JS_FreeValue(ctx, ts->current_exception);
-        ts->current_exception = rp->reason;
-
-        JS_FreeValue(ctx, rp->promise);
-        JS_FreeValue(ctx, rp->reason);
-        list_del(&rp->link);
-        free(rp);
+        js_set_jobs_exception(rt, JS_DupValue(ctx, rp->reason));
+        JS_PromiseMarkAsHandled(ctx, rp->promise);
 #if !defined(_WIN32)
         pthread_mutex_unlock(&ts->mutex);
 #else
@@ -4704,6 +4701,9 @@ int js_std_await_jobs(JSContext* ctx) {
     if (os_poll_func)
         rc = os_poll_func(ctx, FALSE) + 1;/* must invoke Sleep(min_delay) by user */
 
+    if (rc == 0) {
+        rc = JS_IsJobPending(rt) ? 1 : rc;
+    }
 #if !defined(_WIN32)
     pthread_mutex_unlock(&ts->mutex);
 #else
