@@ -1398,6 +1398,11 @@ JS_BOOL JS_FreezeObject(JSContext* ctx, JSValue obj);
 /* get opaque from prototype chain, return NULL in case of Proxy object or Primitive object. class_id can be zero*/
 void* JS_GetOpaque3(JSValueConst obj, JSClassID class_id);
 
+/* only exported for quickjs-libc */
+void JS_SetRuntimeThreadLocal(JSRuntime* rt, void* local);
+/* only exported for quickjs-libc */
+void* JS_GetRuntimeThreadLocal(JSRuntime* rt);
+
 /* The following function is from : https://github.com/quickjs-ng/quickjs.git */
 JS_BOOL JS_IsPromise(JSValue val);
 void JS_PromiseMarkAsHandled(JSContext* ctx, JSValueConst promise);

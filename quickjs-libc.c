@@ -954,7 +954,7 @@ static JSValue js_evalScript(JSContext *ctx, JSValueConst this_val,
                              int argc, JSValueConst *argv)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     const char *str;
     size_t len;
     JSValue ret;
@@ -2057,7 +2057,7 @@ static JSValue js_os_rename(JSContext *ctx, JSValueConst this_val,
 
 static BOOL is_main_thread(JSRuntime *rt)
 {
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     return !ts->recv_pipe;
 }
 
@@ -2088,7 +2088,7 @@ static JSValue js_os_setReadHandler(JSContext *ctx, JSValueConst this_val,
                                     int argc, JSValueConst *argv, int magic)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     JSOSRWHandler *rh;
     int fd;
     JSValueConst func;
@@ -2158,7 +2158,7 @@ static JSValue js_os_signal(JSContext *ctx, JSValueConst this_val,
                             int argc, JSValueConst *argv)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     JSOSSignalHandler *sh;
     uint32_t sig_num;
     JSValueConst func;
@@ -2303,7 +2303,7 @@ static JSValue js_os_clearTimeout(JSContext *ctx, JSValueConst this_val,
                                   int argc, JSValueConst *argv)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     JSOSTimer *th;
     int timer_id;
 
@@ -2321,7 +2321,7 @@ static JSValue js_os_sleepAsync(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     int64_t delay;
     JSOSTimer *th;
     JSValue promise, resolving_funcs[2];
@@ -2367,7 +2367,7 @@ static JS_BOOL call_handler(JSContext *ctx, JSValueConst func, JSValueConst this
     JS_BOOL success = TRUE;
 
     JSRuntime* rt = JS_GetRuntime(ctx);
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
 
     JSRuntimeStackSnapshot snapshot;
     JS_StackSnapshot(rt, &snapshot);
@@ -2537,7 +2537,7 @@ static int handle_posted_message(JSRuntime *rt, JSContext *ctx,
 static int js_os_poll(JSContext *ctx, JS_BOOL sleep)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     int min_delay, count, rc = 0;
     int64_t cur_time, delay;
     JSOSRWHandler *rh;
@@ -2670,7 +2670,7 @@ static int js_poll_add_poll_fd(JSThreadState *ts, int *pnfds, int fd, int events
 static int js_os_poll(JSContext *ctx)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     int min_delay, nfds;
     int64_t cur_time, delay;
     JSOSRWHandler *rh;
@@ -3757,7 +3757,7 @@ static void *worker_func(void *opaque)
     JS_SetModuleLoaderFunc2(rt, NULL, js_module_loader, js_module_check_attributes, NULL);
 
     /* set the pipe to communicate with the parent */
-    ts = JS_GetRuntimeOpaque(rt);
+    ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     ts->recv_pipe = args->recv_pipe;
     ts->send_pipe = args->send_pipe;
 
@@ -3976,7 +3976,7 @@ static JSValue js_worker_set_onmessage(JSContext *ctx, JSValueConst this_val,
                                    JSValueConst func)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     JSWorkerData *worker = JS_GetOpaque2(ctx, this_val, js_worker_class_id);
     JSWorkerMessageHandler *port;
 
@@ -4157,7 +4157,7 @@ static JSValue js_os_create_Worker_class(JSContext* ctx) {
     }
     
     JSRuntime* rt = JS_GetRuntime(ctx);
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     JSValue proto, obj;
     /* Worker class */
     JS_NewClassID(&js_worker_class_id);
@@ -4317,7 +4317,7 @@ void js_std_init_handlers(JSRuntime *rt)
     init_list_head(&ts->rejected_promise_list);
     ts->next_timer_id = 1;
 
-    JS_SetRuntimeOpaque(rt, ts);
+    JS_SetRuntimeThreadLocal(rt, ts);
 
 #ifdef USE_WORKER
     /* set the SharedArrayBuffer memory handlers */
@@ -4342,7 +4342,7 @@ void js_std_init_handlers(JSRuntime *rt)
 
 void js_std_free_handlers(JSRuntime *rt)
 {
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     struct list_head *el, *el1;
 
     list_for_each_safe(el, el1, &ts->os_rw_handlers) {
@@ -4398,7 +4398,7 @@ void js_std_free_handlers(JSRuntime *rt)
     }
 
     free(ts);
-    JS_SetRuntimeOpaque(rt, NULL); /* fail safe */
+    JS_SetRuntimeThreadLocal(rt, NULL); /* fail safe */
 }
 
 void js_std_dump_error(JSContext *ctx)
@@ -4428,7 +4428,7 @@ void js_std_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
                                       JS_BOOL is_handled, void *opaque)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     JSRejectedPromiseEntry *rp;
 
     if (!is_handled) {
@@ -4461,7 +4461,7 @@ void js_std_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
 static void js_std_promise_rejection_check(JSContext *ctx)
 {
     JSRuntime *rt = JS_GetRuntime(ctx);
-    JSThreadState *ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     struct list_head *el;
 
     if (unlikely(!list_empty(&ts->rejected_promise_list))) {
@@ -4545,7 +4545,7 @@ int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
         return 0;
 
     JSRuntime* rt = JS_GetRuntime(ctx);
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     JSOSTimer* th;
 
     th = js_mallocz(ctx, sizeof(*th) + argc * sizeof(JSValue));
@@ -4571,7 +4571,7 @@ int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
 }
 
 void js_std_clear_timer(JSRuntime* rt, int timer_id) {
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     JSOSTimer* th;
 
     if (!ts)
@@ -4584,7 +4584,7 @@ void js_std_clear_timer(JSRuntime* rt, int timer_id) {
 
 /* return the delay of the upcoming timer, thread safe */
 int js_std_timer_mindelay(JSRuntime* rt, int* magic) {
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     if (!ts)
         return -1;
 
@@ -4634,7 +4634,7 @@ int js_std_timer_mindelay(JSRuntime* rt, int* magic) {
    executed successfully. */
 int js_std_await_jobs(JSContext* ctx) {
     JSRuntime* rt = JS_GetRuntime(ctx);
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     if (!ts)
         return 0;
 
@@ -4715,7 +4715,7 @@ int js_std_await_jobs(JSContext* ctx) {
 /* return the pending exception or JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
 JSValue js_std_jobs_exception(JSRuntime* rt) {
     JSValue val;
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     if (!ts)
         return JS_UNINITIALIZED;
     val = ts->current_exception;
@@ -4725,7 +4725,7 @@ JSValue js_std_jobs_exception(JSRuntime* rt) {
 
 /* add polling function, thread safe, all poll_func invoke in js_std_await_jobs */
 JS_BOOL js_std_set_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*), void* data) {
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     JSThreadAsyncPoll* tp;
     if (!ts || !poll_func)
         return FALSE;
@@ -4775,7 +4775,7 @@ JS_BOOL js_std_set_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*), void* da
 
 /* delete polling function, thread safe */
 void* js_std_del_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*)) {
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
+    JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     if (!ts)
         return NULL;
 

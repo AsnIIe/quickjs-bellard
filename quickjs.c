@@ -412,6 +412,7 @@ struct JSRuntime {
     int shape_hash_count; /* number of hashed shapes */
     JSShape **shape_hash;
     void *user_opaque;
+    void* thread_local; /* for quickjs-libc */
     JSRuntimeFinalizerState* finalizers;
 };
 
@@ -61701,6 +61702,16 @@ void* JS_GetOpaque3(JSValueConst obj, JSClassID class_id) {
         }
     }
     return NULL;
+}
+
+void JS_SetRuntimeThreadLocal(JSRuntime* rt, void* local)
+{
+    rt->thread_local = local;
+}
+
+void* JS_GetRuntimeThreadLocal(JSRuntime* rt)
+{
+    return rt->thread_local;
 }
 
 JS_BOOL JS_IsPromise(JSValue val) {
