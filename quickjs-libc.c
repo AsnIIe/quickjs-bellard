@@ -70,14 +70,14 @@ typedef sig_t sighandler_t;
 /* enable the os.Worker API. It relies on POSIX threads */
 // #define USE_WORKER
 
-#if defined(_WIN32) && defined(USE_WORKER)
+#if defined(USE_WORKER)
+#if defined(_WIN32)
 #include "thirdparty/pthread/pthread.h"
 #include "platform/stdatomic.h"
-#endif
-
-#if !defined(_WIN32)
+#else
 #include <pthread.h>
 #include <stdatomic.h>
+#endif
 #endif
 
 #include "cutils.h"
@@ -159,9 +159,9 @@ typedef struct {
 
 typedef struct {
     struct list_head link;
-    void (*poll)(void*);
+    JS_BOOL(*poll)(void*);
     void* data;
-} JSThreadPoll;
+} JSThreadAsyncPoll;
 
 typedef struct JSThreadState {
     struct list_head os_rw_handlers; /* list of JSOSRWHandler.link */
@@ -176,11 +176,11 @@ typedef struct JSThreadState {
 #if !defined(_WIN32)
     struct pollfd *poll_fds;
     int poll_fds_size;
-    pthread_mutex_t mutex;/* for js_std_await_jobs */
+    pthread_mutex_t mutex;/* for js_std_set_asyncpoll */
 #else
-    CRITICAL_SECTION cs;/* for js_std_await_jobs */
+    CRITICAL_SECTION cs;/* for js_std_set_asyncpoll */
 #endif
-    struct list_head poll_list; /* list of JSThreadPoll.link */
+    struct list_head asyncpoll_list; /* list of JSThreadAsyncPoll.link */
     JSValue current_exception;
 } JSThreadState;
 
@@ -2372,7 +2372,7 @@ static JS_BOOL call_handler(JSContext *ctx, JSValueConst func, JSValueConst this
             JS_FreeValue(ctx, ts->current_exception);
         ts->current_exception = JS_GetException(ctx);
         js_std_dump_error1(ctx, ts->current_exception);
-
+        
         JS_RecoverySnapshot(rt, &snapshot);
         success = FALSE;
     }
@@ -2533,13 +2533,6 @@ static int js_os_poll(JSContext *ctx, JS_BOOL sleep)
     JSOSRWHandler *rh;
     struct list_head *el;
     HANDLE handles[MAXIMUM_WAIT_OBJECTS]; // 64
-
-    /* call ts->poll_list every times */
-    list_for_each(el, &ts->poll_list) {
-        JSThreadPoll* tp = list_entry(el, JSThreadPoll, link);
-        if (tp->poll)
-            tp->poll(tp->data);
-    }
 
     /* XXX: handle signals if useful */
 
@@ -4327,14 +4320,14 @@ void js_std_init_handlers(JSRuntime *rt)
         JS_SetSharedArrayBufferFunctions(rt, &sf);
     }
 #endif
-
+    
     ts->current_exception = JS_UNINITIALIZED;
 #if !defined(_WIN32)
     pthread_mutex_init(&ts->mutex, NULL);
 #else
     InitializeCriticalSection(&ts->cs);
 #endif
-    init_list_head(&ts->poll_list);
+    init_list_head(&ts->asyncpoll_list);
 }
 
 void js_std_free_handlers(JSRuntime *rt)
@@ -4388,8 +4381,9 @@ void js_std_free_handlers(JSRuntime *rt)
     DeleteCriticalSection(&ts->cs);
 #endif
 
-    list_for_each_safe(el, el1, &ts->poll_list) {
-        JSThreadPoll* tp = list_entry(el, JSThreadPoll, link);
+    list_for_each_safe(el, el1, &ts->asyncpoll_list) {
+        JSThreadAsyncPoll* tp = list_entry(el, JSThreadAsyncPoll, link);
+        list_del(&tp->link);
         free(tp);
     }
 
@@ -4625,8 +4619,8 @@ int js_std_timer_mindelay(JSRuntime* rt, int* magic) {
     return min_delay;
 }
 
-/* same as js_std_loop, thread safe, execute pending jobs once,
-   return < 0 if exception(get by js_std_thread_exception), 0 if no job pending, 1 if a job was
+/* same as js_std_loop but run all jobs one times, thread safe, execute pending jobs once,
+   return < 0 if exception(get by js_std_jobs_exception), 0 if no job pending, 1 if a job was
    executed successfully. */
 int js_std_await_jobs(JSContext* ctx) {
     JSRuntime* rt = JS_GetRuntime(ctx);
@@ -4640,6 +4634,17 @@ int js_std_await_jobs(JSContext* ctx) {
 #else
     EnterCriticalSection(&ts->cs);
 #endif
+
+    struct list_head* el = NULL;
+    struct list_head* el1 = NULL;
+    /* call ts->asyncpoll_list every times */
+    list_for_each_safe(el, el1, &ts->asyncpoll_list) {
+        JSThreadAsyncPoll* tp = list_entry(el, JSThreadAsyncPoll, link);
+        if (tp->poll && tp->poll(tp->data)) {
+            list_del(&tp->link);
+            free(tp);
+        }
+    }
 
     /* execute the pending jobs */
     for (;;) {
@@ -4662,7 +4667,6 @@ int js_std_await_jobs(JSContext* ctx) {
     }
 
     //like js_std_promise_rejection_check.
-    struct list_head* el = NULL;
     JSRejectedPromiseEntry* rp = NULL;
     list_for_each(el, &ts->rejected_promise_list) {
         rp = list_entry(el, JSRejectedPromiseEntry, link);
@@ -4674,6 +4678,7 @@ int js_std_await_jobs(JSContext* ctx) {
         ts->current_exception = rp->reason;
 
         JS_FreeValue(ctx, rp->promise);
+        JS_FreeValue(ctx, rp->reason);
         list_del(&rp->link);
         free(rp);
 #if !defined(_WIN32)
@@ -4698,7 +4703,7 @@ int js_std_await_jobs(JSContext* ctx) {
 }
 
 /* return the pending exception or JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
-JSValue js_std_thread_exception(JSRuntime* rt) {
+JSValue js_std_jobs_exception(JSRuntime* rt) {
     JSValue val;
     JSThreadState* ts = JS_GetRuntimeOpaque(rt);
     if (!ts)
@@ -4708,27 +4713,47 @@ JSValue js_std_thread_exception(JSRuntime* rt) {
     return val;
 }
 
-/* add polling function, thread safe */
-JS_BOOL js_thread_set_poll(JSRuntime* rt, void (*poll_func)(void*), void* data) {
+/* add polling function, thread safe, all poll_func invoke in js_std_await_jobs */
+JS_BOOL js_std_set_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*), void* data) {
     JSThreadState* ts = JS_GetRuntimeOpaque(rt);
-    JSThreadPoll* tp;
+    JSThreadAsyncPoll* tp;
     if (!ts || !poll_func)
         return FALSE;
 
-    tp = malloc(sizeof(*tp));
-    if (!tp) {
-        return FALSE;
-    }
-    tp->poll = poll_func;
-    tp->data = data;
-    
 #if !defined(_WIN32)
     pthread_mutex_lock(&ts->mutex);
 #else
     EnterCriticalSection(&ts->cs);
 #endif
 
-    list_add_tail(&tp->link, &ts->poll_list);
+    /* check if the poll_func already exists, reset data if already exists*/
+    struct list_head* el;
+    list_for_each(el, &ts->asyncpoll_list) {
+        JSThreadAsyncPoll* tp = list_entry(el, JSThreadAsyncPoll, link);
+        if (tp->poll == poll_func) {
+            tp->data = data;
+#if !defined(_WIN32)
+            pthread_mutex_unlock(&ts->mutex);
+#else
+            LeaveCriticalSection(&ts->cs);
+#endif
+            return FALSE;
+        }
+    }
+
+    tp = malloc(sizeof(*tp));
+    if (!tp) {
+#if !defined(_WIN32)
+        pthread_mutex_unlock(&ts->mutex);
+#else
+        LeaveCriticalSection(&ts->cs);
+#endif
+        return FALSE;
+    }
+    tp->poll = poll_func;
+    tp->data = data;
+
+    list_add_tail(&tp->link, &ts->asyncpoll_list);
 
 #if !defined(_WIN32)
     pthread_mutex_unlock(&ts->mutex);
@@ -4739,57 +4764,34 @@ JS_BOOL js_thread_set_poll(JSRuntime* rt, void (*poll_func)(void*), void* data) 
 }
 
 /* delete polling function, thread safe */
-void js_thread_del_poll(JSRuntime* rt, void (*poll_func)(void*)) {
+void* js_std_del_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*)) {
     JSThreadState* ts = JS_GetRuntimeOpaque(rt);
     if (!ts)
         return;
-    
+
 #if !defined(_WIN32)
     pthread_mutex_lock(&ts->mutex);
 #else
     EnterCriticalSection(&ts->cs);
 #endif
     struct list_head* el;
-    JSThreadPoll* tp = NULL;
-    list_for_each(el, &ts->poll_list) {
-        JSThreadPoll* tp1 = list_entry(el, JSThreadPoll, link);
-        if (tp1->poll == poll_func) {
-            tp = tp1;
+    struct list_head* el1;
+    void* data = NULL;
+    list_for_each_safe(el, el1, &ts->asyncpoll_list) {
+        JSThreadAsyncPoll* tp = list_entry(el, JSThreadAsyncPoll, link);
+        if (tp->poll == poll_func) {
+            data = tp->data;
+            list_del(&tp->link);
+            free(tp);
             break;
         }
     }
-    if (tp) {
-        list_del(&tp->link);
-        free(tp);
-    }
 #if !defined(_WIN32)
     pthread_mutex_unlock(&ts->mutex);
 #else
     LeaveCriticalSection(&ts->cs);
 #endif
-}
-
-/* execute all polling functions, thread safe */
-void js_thread_poll(JSRuntime* rt) {
-    JSThreadState* ts = JS_GetRuntimeOpaque(rt);
-    if (!ts)
-        return;
-#if !defined(_WIN32)
-    pthread_mutex_lock(&ts->mutex);
-#else
-    EnterCriticalSection(&ts->cs);
-#endif
-    struct list_head* el;
-    list_for_each(el, &ts->poll_list) {
-        JSThreadPoll* tp = list_entry(el, JSThreadPoll, link);
-        if (tp->poll)
-            tp->poll(tp->data);
-    }
-#if !defined(_WIN32)
-    pthread_mutex_unlock(&ts->mutex);
-#else
-    LeaveCriticalSection(&ts->cs);
-#endif
+    return data;
 }
 
 JSModuleDef* js_std_load_module(JSContext* ctx, const char* buf, size_t buf_len,

@@ -232,7 +232,6 @@ JS_SealObject
 JS_FreezeObject
 JS_GetOpaque3
 js_std_timer_mindelay
-js_std_thread_exception
-js_thread_set_poll
-js_thread_del_poll
-js_thread_poll
+js_std_jobs_exception
+js_std_set_asyncpoll
+js_std_del_asyncpoll

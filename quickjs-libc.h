@@ -45,14 +45,14 @@ int js_std_set_timer(JSContext* ctx, JSValue job_func, JSValueConst this_val,
 void js_std_clear_timer(JSRuntime* rt, int timer_id);
 /* return the delay of the upcoming timer, thread safe */
 int js_std_timer_mindelay(JSRuntime* rt, int* magic);
-/* same as js_std_loop, thread safe, return < 0 if exception(get by js_std_thread_exception), 0 if no job pending, 1 if successfully. */
+/* same as js_std_loop but run all jobs one times, thread safe, return < 0 if exception(get by js_std_jobs_exception), 0 if no job pending, 1 if successfully. */
 int js_std_await_jobs(JSContext* ctx);
 /* return the pending exception or JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
-JSValue js_std_thread_exception(JSRuntime* rt);
-JS_BOOL js_thread_set_poll(JSRuntime* rt, void (*poll_func)(void*), void* data);
-void js_thread_del_poll(JSRuntime* rt, void (*poll_func)(void*));
-/* execute all polling functions */
-void js_thread_poll(JSRuntime* rt);
+JSValue js_std_jobs_exception(JSRuntime* rt);
+/* add polling function, thread safe, all poll_func invoke in js_std_await_jobs */
+JS_BOOL js_std_set_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*), void* data);
+/* delete polling function, thread safe */
+void* js_std_del_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*));
 void js_std_init_handlers(JSRuntime *rt);
 void js_std_free_handlers(JSRuntime *rt);
 void js_std_dump_error(JSContext *ctx);
