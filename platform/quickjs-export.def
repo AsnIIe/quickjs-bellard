@@ -216,7 +216,6 @@ unicode_from_utf8
 unicode_to_utf8
 
 ;The following is the extension function, add by zenx
-js_std_load_module
 JS_IsDate
 JS_GetClassConstructor
 JS_GetClassName

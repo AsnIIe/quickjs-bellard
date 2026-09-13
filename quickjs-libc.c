@@ -4804,46 +4804,6 @@ void* js_std_del_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*)) {
     return data;
 }
 
-JSModuleDef* js_std_load_module(JSContext* ctx, const char* buf, size_t buf_len,
-                                const char* module_name)
-{
-    JSModuleDef* m = NULL;
-    
-    if (!buf) {
-        JS_ThrowReferenceError(ctx, "the buffer of module is NULL");
-        return NULL;
-    }
-    JSValue func_val;
-    /* compile the module */
-    func_val = JS_Eval(ctx, (char*)buf, buf_len, module_name,
-                       JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-    if (JS_IsException(func_val))
-        return NULL;
-    /* XXX: could propagate the exception */
-    if (js_module_set_import_meta(ctx, func_val, TRUE, FALSE) != -1) {
-        /* the module is already referenced, so we must free it */
-        m = JS_VALUE_GET_PTR(func_val);
-    }
-    JS_FreeValue(ctx, func_val);
-
-    if (!m)
-        return NULL;
-
-    if (JS_ResolveModule(ctx, JS_MKPTR(JS_TAG_MODULE, m)) < 0) {
-        return NULL;
-    }
-    /* Evaluate the module code */
-    JSValue func_obj, ret;
-    func_obj = JS_DupValue(ctx, JS_MKPTR(JS_TAG_MODULE, m));
-    ret = JS_EvalFunction(ctx, func_obj);
-    if (JS_IsException(ret)) {
-        JS_FreeValue(ctx, ret); /* XXX: what to do if exception ? */
-        return NULL;
-    }
-    JS_FreeValue(ctx, ret);
-    return m;
-}
-
 void js_std_eval_binary(JSContext *ctx, const uint8_t *buf, size_t buf_len,
                         int load_only)
 {
