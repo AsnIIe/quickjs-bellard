@@ -1397,6 +1397,32 @@ JS_BOOL JS_FreezeObject(JSContext* ctx, JSValue obj);
 /* get opaque from prototype chain, return NULL in case of Proxy object or Primitive object. class_id can be zero*/
 void* JS_GetOpaque3(JSValueConst obj, JSClassID class_id);
 
+/* The following function is from : https://github.com/quickjs-ng/quickjs.git */
+JS_BOOL JS_IsPromise(JSValue val);
+void JS_PromiseMarkAsHandled(JSContext* ctx, JSValueConst promise);
+JSValue JS_NewSettledPromise(JSContext* ctx, JS_BOOL is_reject, JSValueConst value);
+
+JSValue JS_PromiseThen(JSContext* ctx, JSValueConst promise,
+                       JSValueConst on_fulfilled,
+                       JSValueConst on_rejected);
+
+typedef enum JSPromiseHookType {
+    JS_PROMISE_HOOK_INIT,     // emitted when a new promise is created
+    JS_PROMISE_HOOK_BEFORE,   // runs right before promise.then is invoked
+    JS_PROMISE_HOOK_AFTER,    // runs right after promise.then is invoked
+    JS_PROMISE_HOOK_RESOLVE,  // not emitted for rejected promises
+} JSPromiseHookType;
+
+// parent_promise is only passed in when type == JS_PROMISE_HOOK_INIT and
+// is then either a promise object or JS_UNDEFINED if the new promise does
+// not have a parent promise; only promises created with promise.then have
+// a parent promise
+typedef void JSPromiseHook(JSContext* ctx, JSPromiseHookType type,
+                           JSValueConst promise, JSValueConst parent_promise,
+                           void* opaque);
+void JS_SetPromiseHook(JSRuntime* rt, JSPromiseHook promise_hook,
+                           void* opaque);
+
 #undef js_unlikely
 #undef js_force_inline
 

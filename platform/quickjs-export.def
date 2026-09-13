@@ -235,3 +235,7 @@ js_std_timer_mindelay
 js_std_jobs_exception
 js_std_set_asyncpoll
 js_std_del_asyncpoll
+JS_IsPromise
+JS_PromiseMarkAsHandled
+JS_NewSettledPromise
+JS_PromiseThen
