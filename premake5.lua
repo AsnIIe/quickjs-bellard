@@ -123,9 +123,10 @@ project "libquickjs"
 	targetname "%{prj.name}%{cfg.platform}"
 -----------------------------------------------------------------------------------------------------------------------
 project "examples"
-	language "C"
+	language "C++"
 	kind "ConsoleApp"
 	links { "libes" }
+	exceptionhandling "On"
 	files {
 		"examples/main.cpp"
 	}

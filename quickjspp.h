@@ -235,8 +235,7 @@ namespace quickjs {
 
 	class type_error : public std::exception {
 	public:
-		explicit type_error(const std::string& msg) : msg_(msg) {
-		}
+		explicit type_error(const std::string& msg) : msg_(msg) {}
 
 		const char* what() const noexcept override {
 			return msg_.c_str();
@@ -267,29 +266,27 @@ namespace quickjs {
 		JSMemRef() noexcept = default;
 
 		explicit JSMemRef(JSRuntime* rt, Type* ptr)
-			: rt(rt), ptref(ptr) {
-		}
+			: runtime(rt), ptref(ptr) {}
 
 		explicit JSMemRef(JSContext* ctx, Type* ptr)
-			: rt(JS_GetRuntime(ctx)), ptref(ptr) {
-		}
+			: runtime(JS_GetRuntime(ctx)), ptref(ptr) {}
 
 		JSMemRef(const JSMemRef& other) = delete;
 
 		JSMemRef(JSMemRef&& other) noexcept {
-			reset(other.rt, other.ptref);
+			reset(other.runtime, other.ptref);
 			other.release();
 		}
 
 		~JSMemRef() {
-			JS_FreeRT(rt, ptref);
+			JS_FreeRT(runtime, ptref);
 			release();
 		}
 
 		JSMemRef& operator=(const JSMemRef& other) = delete;
 
 		JSMemRef& operator=(JSMemRef&& other) noexcept {
-			reset(other.rt, other.ptref);
+			reset(other.runtime, other.ptref);
 			other.release();
 			return *this;
 		}
@@ -307,23 +304,23 @@ namespace quickjs {
 		}
 
 		Type* release() noexcept {
-			rt = nullptr;
+			runtime = nullptr;
 			return std::exchange(ptref, nullptr);
 		}
 
 		void reset(JSRuntime* rt = nullptr, Type* ptr = nullptr) noexcept {
-			JS_FreeRT(rt, ptref);
-			rt = rt;
+			JS_FreeRT(runtime, ptref);
+			runtime = rt;
 			ptref = ptr;
 		}
 
 		void reset(JSContext* ctx = nullptr, Type* ptr = nullptr) noexcept {
-			reset(JS_GetRuntime(ctx), ptr);
+			reset(ctx ? JS_GetRuntime(ctx) : nullptr, ptr);
 		}
 
 	private:
 		Type* ptref = nullptr;
-		JSRuntime* rt = nullptr;
+		JSRuntime* runtime = nullptr;
 	};
 
 	template<typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
@@ -365,8 +362,7 @@ namespace quickjs {
 		JSCStringRef() noexcept = default;
 
 		explicit JSCStringRef(JSContext* ctx, JSValue val)
-			:ctx(ctx), string(character.unwrap(ctx, val)) {
-		}
+			:context(ctx), string(character.unwrap(ctx, val)) {}
 
 		explicit JSCStringRef(JSContext* ctx, JSAtom atom) :ctx(ctx) {
 			JSValue v = JS_AtomToValue(ctx, atom);
@@ -377,13 +373,13 @@ namespace quickjs {
 		JSCStringRef(const JSCStringRef& other) = delete;
 
 		JSCStringRef(JSCStringRef&& other) noexcept {
-			reset(other.ctx, other.string);
+			reset(other.context, other.string);
 			other.release();
 		}
 
 		~JSCStringRef() {
-			if (ctx && string) {
-				character.release(ctx, string);
+			if (context && string) {
+				character.release(context, string);
 			}
 			release();
 		}
@@ -391,7 +387,7 @@ namespace quickjs {
 		JSCStringRef& operator=(const JSCStringRef& other) = delete;
 
 		JSCStringRef& operator=(JSCStringRef&& other) noexcept {
-			reset(other.ctx, other.string);
+			reset(other.context, other.string);
 			other.release();
 			return *this;
 		}
@@ -413,21 +409,21 @@ namespace quickjs {
 		}
 
 		const char* release() noexcept {
-			ctx = nullptr;
+			context = nullptr;
 			return std::exchange(string, nullptr);
 		}
 
-		void reset(JSContext* ctx_ = nullptr, const char* cstr = nullptr) noexcept {
-			if (ctx && string) {
-				character.release(ctx, string);
+		void reset(JSContext* ctx = nullptr, const char* cstr = nullptr) noexcept {
+			if (context && string) {
+				character.release(context, string);
 			}
-			ctx = ctx_;
+			context = ctx;
 			string = cstr;
 		}
 
 	private:
 		const char* string = nullptr;
-		JSContext* ctx = nullptr;
+		JSContext* context = nullptr;
 		Character character;
 	};
 
@@ -441,37 +437,36 @@ namespace quickjs {
 		JSAtomRef() noexcept = default;
 
 		explicit JSAtomRef(JSContext* ctx, JSAtom atom)
-			:ctx_(ctx), atom_(atom) {
+			:context(ctx), jsatom(atom) {
 
 		}
 
 		explicit JSAtomRef(JSContext* ctx, JSValue val)
-			:ctx_(ctx), atom_(JS_ValueToAtom(ctx, val)) {
-		}
+			:context(ctx), jsatom(JS_ValueToAtom(ctx, val)) {}
 
 		JSAtomRef(const JSAtomRef& other) = delete;
 
 		JSAtomRef(JSAtomRef&& other) noexcept {
-			reset(other.ctx_, other.atom_);
+			reset(other.context, other.jsatom);
 			other.release();
 		}
 
 		JSAtomRef& operator=(const JSAtomRef& other) = delete;
 		JSAtomRef& operator=(JSAtomRef&& other) noexcept {
-			reset(other.ctx_, other.atom_);
+			reset(other.context, other.jsatom);
 			other.release();
 			return *this;
 		}
 
 		~JSAtomRef() {
-			if (ctx_ && atom_) {
-				JS_FreeAtom(ctx_, atom_);
+			if (context && jsatom != JS_ATOM_NULL) {
+				JS_FreeAtom(context, jsatom);
 			}
 			release();
 		}
 
 		JSAtom get() const {
-			return atom_;
+			return jsatom;
 		}
 
 		JSAtom operator*() const {
@@ -479,26 +474,26 @@ namespace quickjs {
 		}
 
 		operator bool() const noexcept {
-			return atom_ != 0;
+			return jsatom != JS_ATOM_NULL;
 		}
 
 		JSAtom release() noexcept {
-			ctx_ = nullptr;
-			atom_ = 0;
-			return std::exchange(atom_, 0);
+			context = nullptr;
+			jsatom = JS_ATOM_NULL;
+			return std::exchange(jsatom, 0);
 		}
 
 		void reset(JSContext* ctx = nullptr, JSAtom atom = 0) {
-			if (ctx_ && atom_) {
-				JS_FreeAtom(ctx_, atom_);
+			if (context && jsatom) {
+				JS_FreeAtom(context, jsatom);
 			}
-			ctx_ = ctx;
-			atom_ = atom;
+			context = ctx;
+			jsatom = atom;
 		}
 
 	private:
-		JSContext* ctx_;
-		JSAtom atom_;
+		JSContext* context;
+		JSAtom jsatom;
 	};
 
 	class JSPropertyRef;
@@ -508,19 +503,18 @@ namespace quickjs {
 		JSValueRef() noexcept = default;
 
 		explicit JSValueRef(JSContext* ctx, JSValue val)
-			: ctx(ctx), ref(val) {
-		}
+			: context(ctx), jsvalue(val) {}
 
 		JSValueRef(const JSValueRef& other) = delete;
 
 		JSValueRef(JSValueRef&& other) noexcept {
-			reset(other.ctx, other.ref);
+			reset(other.context, other.jsvalue);
 			other.release();
 		}
 
 		virtual ~JSValueRef() {
-			if (ctx && ref != JS_UNDEFINED) {
-				JS_FreeValue(ctx, ref);
+			if (context && jsvalue != JS_UNDEFINED) {
+				JS_FreeValue(context, jsvalue);
 			}
 			release();
 		}
@@ -528,30 +522,30 @@ namespace quickjs {
 		JSValueRef& operator=(const JSValueRef& other) = delete;
 
 		JSValueRef& operator=(JSValueRef&& other) noexcept {
-			reset(other.ctx, other.ref);
+			reset(other.context, other.jsvalue);
 			other.release();
 			return *this;
 		}
 
 		JSValue get() const noexcept {
-			return ref;
+			return jsvalue;
 		}
 
 		JSValue operator*() const noexcept {
-			return ref;
+			return jsvalue;
 		}
 
 		JSValue release() noexcept {
-			ctx = nullptr;
-			return std::exchange(ref, JS_UNDEFINED);
+			context = nullptr;
+			return std::exchange(jsvalue, JS_UNDEFINED);
 		}
 
-		void reset(JSContext* ctx_ = nullptr, JSValue val = JS_UNDEFINED) noexcept {
-			if (ctx && ref != JS_UNDEFINED) {
-				JS_FreeValue(ctx, ref);
+		void reset(JSContext* ctx = nullptr, JSValue val = JS_UNDEFINED) noexcept {
+			if (context && jsvalue != JS_UNDEFINED) {
+				JS_FreeValue(context, jsvalue);
 			}
-			ctx = ctx_;
-			ref = val;
+			context = ctx;
+			jsvalue = val;
 		}
 
 		operator int() const {
@@ -603,7 +597,7 @@ namespace quickjs {
 				throw type_error("array is required");
 			}
 			int64_t len;
-			if (JS_GetPropertyLength(ctx, &len, ref) == -1) {
+			if (JS_GetPropertyLength(context, &len, jsvalue) == -1) {
 				throw type_error("fail to get .length");
 			}
 			return static_cast<size_t>(len);
@@ -634,62 +628,62 @@ namespace quickjs {
 
 		template<>
 		bool is<JSType::integer>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_INT;
+			return JS_VALUE_GET_TAG(jsvalue) == JS_TAG_INT;
 		}
 
 		template<>
 		bool is<JSType::boolean>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_BOOL;
+			return JS_VALUE_GET_TAG(jsvalue) == JS_TAG_BOOL;
 		}
 
 		template<>
 		bool is<JSType::number>() const {
-			return JS_IsNumber(ref);
+			return JS_IsNumber(jsvalue);
 		}
 
 		template<>
 		bool is<JSType::string>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_STRING;
+			return JS_VALUE_GET_TAG(jsvalue) == JS_TAG_STRING;
 		}
 
 		template<>
 		bool is<JSType::object>() const {
-			return (JS_VALUE_GET_TAG(ref) == JS_TAG_OBJECT) && !JS_IsArray(ctx, ref);
+			return (JS_VALUE_GET_TAG(jsvalue) == JS_TAG_OBJECT) && !JS_IsArray(context, jsvalue);
 		}
 
 		template<>
 		bool is<JSType::array>() const {
-			return JS_IsArray(ctx, ref);
+			return JS_IsArray(context, jsvalue);
 		}
 
 		template<>
 		bool is<JSType::function>() const {
-			return JS_IsFunction(ctx, ref);
+			return JS_IsFunction(context, jsvalue);
 		}
 
 		template<>
 		bool is<JSType::symbol>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_SYMBOL;
+			return JS_VALUE_GET_TAG(jsvalue) == JS_TAG_SYMBOL;
 		}
 
 		template<>
 		bool is<JSType::undefined>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_UNDEFINED;
+			return JS_VALUE_GET_TAG(jsvalue) == JS_TAG_UNDEFINED;
 		}
 
 		template<>
 		bool is<JSType::uninitialized>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_UNINITIALIZED;
+			return JS_VALUE_GET_TAG(jsvalue) == JS_TAG_UNINITIALIZED;
 		}
 
 		template<>
 		bool is<JSType::null>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_NULL;
+			return JS_VALUE_GET_TAG(jsvalue) == JS_TAG_NULL;
 		}
 
 		template<>
 		bool is<JSType::exception>() const {
-			return JS_VALUE_GET_TAG(ref) == JS_TAG_EXCEPTION;
+			return JS_VALUE_GET_TAG(jsvalue) == JS_TAG_EXCEPTION;
 		}
 
 		bool is(JSType type) const {
@@ -730,10 +724,10 @@ namespace quickjs {
 				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
 			}
 			if (std::is_same_v<std::decay_t<T>, bool>) {
-				return static_cast<T>(JS_ToBool(ctx, ref));
+				return static_cast<T>(JS_ToBool(context, jsvalue));
 			} else if (std::is_integral_v<std::decay_t<T>>) {
 				int val;
-				if (JS_ToInt32(ctx, &val, ref) == -1) {
+				if (JS_ToInt32(context, &val, jsvalue) == -1) {
 					throw type_error("type conversion error");
 				}
 				if (std::is_unsigned_v<T> && val < 0) {
@@ -742,7 +736,7 @@ namespace quickjs {
 				return static_cast<T>(val);
 			} else if (std::is_floating_point_v<std::decay_t<T>>) {
 				double val;
-				if (JS_ToFloat64(ctx, &val, ref) == -1) {
+				if (JS_ToFloat64(context, &val, jsvalue) == -1) {
 					throw type_error("type conversion error");
 				}
 				if (std::is_unsigned_v<T> && val < 0) {
@@ -763,9 +757,9 @@ namespace quickjs {
 			if (!is<std::string>()) {
 				throw type_error("string is required");
 			}
-			const char* s = JS_ToCString(ctx, ref);
+			const char* s = JS_ToCString(context, jsvalue);
 			std::string val(s);
-			JS_FreeCString(ctx, s);
+			JS_FreeCString(context, s);
 			return val;
 		}
 
@@ -774,7 +768,7 @@ namespace quickjs {
 			if (!is<JSCString>()) {
 				throw type_error("string is required");
 			}
-			return quickjs::JSCString(ctx, ref);
+			return quickjs::JSCString(context, jsvalue);
 		}
 
 		template<>
@@ -782,7 +776,7 @@ namespace quickjs {
 			if (!is<JSCStringA>()) {
 				throw type_error("string is required");
 			}
-			return quickjs::JSCStringA(ctx, ref);
+			return quickjs::JSCStringA(context, jsvalue);
 		}
 
 		/**
@@ -793,7 +787,7 @@ namespace quickjs {
 		 */
 		template<typename T>
 		T value(T default_val, bool throw_err = true) const {
-			if (!ctx) {
+			if (!context) {
 				return default_val;
 			} else if (!is<T>()) {
 				if (!throw_err)
@@ -833,25 +827,21 @@ namespace quickjs {
 			return typeid(T).name();
 		}
 
-		JSValue ref = JS_UNDEFINED;
-		JSContext* ctx = nullptr;
+		JSValue jsvalue = JS_UNDEFINED;
+		JSContext* context = nullptr;
 	};
 
 	class JSPropertyRef :public JSValueRef {
 	public:
-		//using JSValueRef::JSValueRef;
-
 		JSPropertyRef() = delete;
 
 		explicit JSPropertyRef(JSContext* ctx, JSValue val, std::string name) :JSValueRef(ctx, val),
 			property_name(name),
-			property_exists(ctx != nullptr) {
-		}
+			property_exists(ctx != nullptr) {}
 
 		explicit JSPropertyRef(std::string name) :JSValueRef(),
 			property_name(name),
-			property_exists(false) {
-		}
+			property_exists(false) {}
 
 		JSPropertyRef(const JSPropertyRef& other) = delete;
 
@@ -924,9 +914,9 @@ namespace quickjs {
 		if (!is<JSType::object>()) {
 			throw type_error("object is required");
 		}
-		JSAtomRef prop(ctx, *JSValueRef(ctx, JS_NewString(ctx, key)));
-		if (JS_HasProperty(ctx, ref, *prop)) {
-			return quickjs::JSPropertyRef(ctx, JS_GetProperty(ctx, ref, *prop), key);
+		JSAtomRef prop(context, *JSValueRef(context, JS_NewString(context, key)));
+		if (JS_HasProperty(context, jsvalue, *prop)) {
+			return quickjs::JSPropertyRef(context, JS_GetProperty(context, jsvalue, *prop), key);
 		}
 		return quickjs::JSPropertyRef(key);
 	}
@@ -935,9 +925,9 @@ namespace quickjs {
 		if (!is<JSType::array>()) {
 			throw type_error("array is required");
 		}
-		JSAtomRef prop(ctx, *JSValueRef(ctx, JS_NewInt32(ctx, idx)));
-		if (JS_HasProperty(ctx, ref, *prop)) {
-			return quickjs::JSPropertyRef(ctx, JS_GetProperty(ctx, ref, *prop), quickjs::format_str("[%d]", idx));
+		JSAtomRef prop(context, *JSValueRef(context, JS_NewInt32(context, idx)));
+		if (JS_HasProperty(context, jsvalue, *prop)) {
+			return quickjs::JSPropertyRef(context, JS_GetProperty(context, jsvalue, *prop), quickjs::format_str("[%d]", idx));
 		}
 		return quickjs::JSPropertyRef(quickjs::format_str("[%d]", idx));
 	}
@@ -951,13 +941,11 @@ namespace quickjs {
 
 		explicit JSArgumentRef(JSContext* ctx, JSValue val, int arg_idx) :JSValueRef(ctx, val),
 			argument_idx(arg_idx),
-			no_arguments(ctx == nullptr) {
-		}
+			no_arguments(ctx == nullptr) {}
 
 		explicit JSArgumentRef(int arg_idx) :JSValueRef(),
 			argument_idx(arg_idx),
-			no_arguments(true) {
-		}
+			no_arguments(true) {}
 
 		JSArgumentRef(const JSArgumentRef& other) = delete;
 
@@ -1026,9 +1014,7 @@ namespace quickjs {
 	class JSArguments {
 	public:
 		explicit JSArguments(JSContext* ctx, int argc, JSValueConst* argv)
-			:ctx_(ctx), argc_(argc), argv_(argv), argumentsGroupId(-1) {
-
-		}
+			:ctx_(ctx), argc_(argc), argv_(argv), argumentsGroupId(-1) {}
 
 		JSArguments(const JSArguments& arguments) = delete;
 		JSArguments(JSArguments&& arguments) = delete;
@@ -1037,6 +1023,7 @@ namespace quickjs {
 		JSArguments& operator=(JSArguments&& arguments) = delete;
 
 		/* maybe assertion failed: list_empty(&rt->gc_obj_list), when use 'arguments[0][5].value<bool>()' but throw exception */
+		/* Fix : Enable the MSVC compiler's exception handling(/EHsc) for the C++ project */
 		quickjs::JSArgumentRef operator[](int idx) {
 			if (std::abs(idx) >= size()) {
 				return quickjs::JSArgumentRef(idx);
