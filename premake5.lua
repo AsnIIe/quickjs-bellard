@@ -127,6 +127,7 @@ project "examples"
 	kind "ConsoleApp"
 	links { "libes" }
 	exceptionhandling "On"
+	rtti "On"
 	files {
 		"examples/main.cpp"
 	}

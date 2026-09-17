@@ -362,24 +362,24 @@ namespace quickjs {
 		JSCStringRef() noexcept = default;
 
 		explicit JSCStringRef(JSContext* ctx, JSValue val)
-			:context(ctx), string(character.unwrap(ctx, val)) {}
+			:context(ctx), strptr(character.unwrap(ctx, val)) {}
 
-		explicit JSCStringRef(JSContext* ctx, JSAtom atom) :ctx(ctx) {
+		explicit JSCStringRef(JSContext* ctx, JSAtom atom) :context(ctx) {
 			JSValue v = JS_AtomToValue(ctx, atom);
-			string = character.unwrap(ctx, v);
+			strptr = character.unwrap(ctx, v);
 			JS_FreeValue(ctx, v);
 		}
 
 		JSCStringRef(const JSCStringRef& other) = delete;
 
 		JSCStringRef(JSCStringRef&& other) noexcept {
-			reset(other.context, other.string);
+			reset(other.context, other.strptr);
 			other.release();
 		}
 
 		~JSCStringRef() {
-			if (context && string) {
-				character.release(context, string);
+			if (context && strptr) {
+				character.release(context, strptr);
 			}
 			release();
 		}
@@ -387,42 +387,42 @@ namespace quickjs {
 		JSCStringRef& operator=(const JSCStringRef& other) = delete;
 
 		JSCStringRef& operator=(JSCStringRef&& other) noexcept {
-			reset(other.context, other.string);
+			reset(other.context, other.strptr);
 			other.release();
 			return *this;
 		}
 
 		const char* get() const noexcept {
-			return string;
+			return strptr;
 		}
 
 		const char* operator*() const noexcept {
-			return string;
+			return strptr;
 		}
 
 		explicit operator bool() const noexcept {
-			return string != nullptr;
+			return strptr != nullptr;
 		}
 
 		operator std::string() const noexcept {
-			return std::string(string);
+			return std::string(strptr);
 		}
 
 		const char* release() noexcept {
 			context = nullptr;
-			return std::exchange(string, nullptr);
+			return std::exchange(strptr, nullptr);
 		}
 
 		void reset(JSContext* ctx = nullptr, const char* cstr = nullptr) noexcept {
-			if (context && string) {
-				character.release(context, string);
+			if (context && strptr) {
+				character.release(context, strptr);
 			}
 			context = ctx;
-			string = cstr;
+			strptr = cstr;
 		}
 
 	private:
-		const char* string = nullptr;
+		const char* strptr = nullptr;
 		JSContext* context = nullptr;
 		Character character;
 	};
@@ -549,35 +549,35 @@ namespace quickjs {
 		}
 
 		operator int() const {
-			return value<int>();
+			return as<int>();
 		}
 
 		operator size_t() const {
-			return value<size_t>();
+			return as<size_t>();
 		}
 
 		operator double() const {
-			return value<double>();
+			return as<double>();
 		}
 
 		operator float() const {
-			return value<float>();
+			return as<float>();
 		}
 
 		operator bool() const {
-			return value<bool>();
+			return as<bool>();
 		}
 
 		operator std::string() const {
-			return value<std::string>();
+			return as<std::string>();
 		}
 
 		operator quickjs::JSCString() const {
-			return value<quickjs::JSCString>();
+			return as<quickjs::JSCString>();
 		}
 
 		operator quickjs::JSCStringA() const {
-			return value<quickjs::JSCStringA>();
+			return as<quickjs::JSCStringA>();
 		}
 
 		/*Note: When using the class quickjs::JSPropertyRef, it must be defined after quickjs::JSPropertyRef */
@@ -648,16 +648,22 @@ namespace quickjs {
 
 		template<>
 		bool is<JSType::object>() const {
+			if (!context)
+				return false;
 			return (JS_VALUE_GET_TAG(jsvalue) == JS_TAG_OBJECT) && !JS_IsArray(context, jsvalue);
 		}
 
 		template<>
 		bool is<JSType::array>() const {
+			if (!context)
+				return false;
 			return JS_IsArray(context, jsvalue);
 		}
 
 		template<>
 		bool is<JSType::function>() const {
+			if (!context)
+				return false;
 			return JS_IsFunction(context, jsvalue);
 		}
 
@@ -719,7 +725,7 @@ namespace quickjs {
 		}
 
 		template<typename T>
-		T value() const {
+		T as() const {
 			if (!is<T>()) {
 				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
 			}
@@ -739,21 +745,18 @@ namespace quickjs {
 				if (JS_ToFloat64(context, &val, jsvalue) == -1) {
 					throw type_error("type conversion error");
 				}
-				if (std::is_unsigned_v<T> && val < 0) {
-					throw type_error("positive number is required");
-				}
 				return static_cast<T>(val);
 			}
 			throw type_error("type mismatch");
 		}
 
 		template<>
-		const char* value<const char*>() const = delete;
+		const char* as<const char*>() const = delete;
 		template<>
-		char* value<char*>() const = delete;
+		char* as<char*>() const = delete;
 
 		template<>
-		std::string value<std::string>() const {
+		std::string as<std::string>() const {
 			if (!is<std::string>()) {
 				throw type_error("string is required");
 			}
@@ -764,7 +767,7 @@ namespace quickjs {
 		}
 
 		template<>
-		quickjs::JSCString value<quickjs::JSCString>() const {
+		quickjs::JSCString as<quickjs::JSCString>() const {
 			if (!is<JSCString>()) {
 				throw type_error("string is required");
 			}
@@ -772,7 +775,7 @@ namespace quickjs {
 		}
 
 		template<>
-		quickjs::JSCStringA value<quickjs::JSCStringA>() const {
+		quickjs::JSCStringA as<quickjs::JSCStringA>() const {
 			if (!is<JSCStringA>()) {
 				throw type_error("string is required");
 			}
@@ -786,7 +789,7 @@ namespace quickjs {
 		 * @param throw_err    If true, throws quickjs::type_error on type mismatch; if false, returns default_val.
 		 */
 		template<typename T>
-		T value(T default_val, bool throw_err = true) const {
+		T as(T default_val, bool throw_err = true) const {
 			if (!context) {
 				return default_val;
 			} else if (!is<T>()) {
@@ -795,13 +798,13 @@ namespace quickjs {
 
 				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
 			}
-			return value<T>();
+			return as<T>();
 		}
 
 		template<>
-		const char* value<const char*>(const char* default_val, bool throw_err) const = delete;
+		const char* as<const char*>(const char* default_val, bool throw_err) const = delete;
 		template<>
-		char* value<char*>(char* default_val, bool throw_err) const = delete;
+		char* as<char*>(char* default_val, bool throw_err) const = delete;
 
 	protected:
 		virtual quickjs::type_error type_error(const std::string& msg) const {
