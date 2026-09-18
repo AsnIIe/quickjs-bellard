@@ -1017,7 +1017,7 @@ namespace quickjs {
 	class JSArguments {
 	public:
 		explicit JSArguments(JSContext* ctx, int argc, JSValueConst* argv)
-			:ctx_(ctx), argc_(argc), argv_(argv), argumentsGroupId(-1) {}
+			:ctx_(ctx), argc_(argc), argv_(argv), argumentsGroupId(-1), isGroupRegisted(false) {}
 
 		JSArguments(const JSArguments& arguments) = delete;
 		JSArguments(JSArguments&& arguments) = delete;
@@ -1038,7 +1038,22 @@ namespace quickjs {
 			}
 		}
 
+		/**
+		 * @brief Explicit conversion operator to bool.
+		 *
+		 * Allows the object to be used in boolean contexts (e.g., if, while)
+		 * without implicit conversions.
+		 *
+		 * @return true if the object is considered "valid"; false otherwise.
+		 *         - If the group is registered, returns true when argumentsGroupId != -1.
+		 *         - Otherwise, returns true when argc_ > 0.
+		 *
+		 * @note This operator is marked noexcept and does not throw exceptions.
+		 */
 		explicit operator bool() const noexcept {
+			if (isGroupRegisted) {
+				return argumentsGroupId != -1;
+			}
 			return argc_ > 0;
 		}
 
@@ -1061,7 +1076,8 @@ namespace quickjs {
 		 */
 		template<size_t GroupId, typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
 		void registerGroup(TagTypes... require_tags) noexcept {
-			constexpr size_t require_size = sizeof...(require_tags);
+			isGroupRegisted = true;
+			constexpr size_t require_size = sizeof...(TagTypes);
 			if (argc_ != require_size) {
 				return;
 			}
@@ -1080,6 +1096,7 @@ namespace quickjs {
 
 		template<size_t GroupId>
 		void registerGroup() noexcept {
+			isGroupRegisted = true;
 			if (argc_ == 0) {
 				argumentsGroupId = GroupId;
 			}
@@ -1119,7 +1136,7 @@ namespace quickjs {
 		 */
 		template<typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
 		bool IsArgsOf(TagTypes... require_types) noexcept {
-			constexpr size_t require_size = sizeof...(require_types);
+			constexpr size_t require_size = sizeof...(TagTypes);
 			if (size() != static_cast<int>(require_size)) {
 				return false;
 			}
@@ -1144,7 +1161,7 @@ namespace quickjs {
 		 */
 		template<typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
 		bool IsArgsOf(size_t s_idx, TagTypes... require_types) noexcept {
-			constexpr size_t require_size = sizeof...(require_types);
+			constexpr size_t require_size = sizeof...(TagTypes);
 			if (size() - s_idx != static_cast<int>(require_size)) {
 				return false;
 			}
@@ -1169,7 +1186,7 @@ namespace quickjs {
 		 */
 		template<typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
 		bool ExpectArgsOf(TagTypes... require_types) noexcept {
-			constexpr size_t require_size = sizeof...(require_types);
+			constexpr size_t require_size = sizeof...(TagTypes);
 			if (size() < static_cast<int>(require_size)) {
 				return false;
 			}
@@ -1195,7 +1212,7 @@ namespace quickjs {
 		 */
 		template<typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
 		bool ExpectArgsOf(size_t s_idx, TagTypes... require_types) noexcept {
-			constexpr size_t require_size = sizeof...(require_types);
+			constexpr size_t require_size = sizeof...(TagTypes);
 			if (size() - s_idx < static_cast<int>(require_size)) {
 				return false;
 			}
@@ -1215,133 +1232,8 @@ namespace quickjs {
 		JSValueConst* argv_;
 		JSContext* ctx_;
 		int argumentsGroupId;
+		bool isGroupRegisted;
 	};
-
-	/**
-	* @brief Checks if the arguments strictly match the expected count and type tags.
-	*
-	* @note This function performs a strict low-level tag comparison. It requires the
-	*       number of arguments to be exactly the same, and does not handle JavaScript
-	*       implicit type coercions (e.g., Int to Double).
-	*
-	* @param argc          The actual number of arguments passed from the JS context.
-	* @param argv          A pointer to the array of JSValue arguments.
-	* @param require_tags A variadic list of expected type tags to match against.
-	* @return true         If argc exactly equals the number of expected tags, and all tags match.
-	* @return false        If the argument count differs, or any tag mismatch occurs.
-	*/
-	template<typename... TagTypes>
-	static inline bool JS_IsArgsOf(int argc, JSValue* argv, TagTypes... require_tags) {
-		constexpr size_t require_size = sizeof...(require_tags);
-		if (argc != static_cast<int>(require_size)) {
-			return false;
-		}
-		const int tags[] = { static_cast<int>(require_tags)... };
-		for (size_t i = 0; i < require_size; i++) {
-			if (JS_VALUE_GET_TAG(argv[i]) != tags[i]) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	/**
-	* @brief Checks if the type tags of the first N JSValue arguments exactly match the expected tags.
-	*
-	* @note This function performs a strict low-level tag comparison. It does not handle
-	*       JavaScript implicit type coercions (e.g., Int to Double).
-	*
-	* @param argc          The actual number of arguments passed from the JS context.
-	* @param argv          A pointer to the array of JSValue arguments.
-	* @param expected_tags A variadic list of expected type tags to match against.
-	* @return true         If argc is sufficient and the first N argument tags match exactly.
-	* @return false        If there are not enough arguments, or any tag mismatch occurs.
-	*/
-	template<typename... TagTypes>
-	static inline bool JS_ExceptedArgsOf(int argc, JSValue* argv, TagTypes... expected_tags) {
-		constexpr size_t expected_size = sizeof...(expected_tags);
-		if (argc < static_cast<int>(expected_size)) {
-			return false;
-		}
-		const int tags[] = { static_cast<int>(expected_tags)... };
-		for (size_t i = 0; i < expected_size; i++) {
-			if (JS_VALUE_GET_TAG(argv[i]) != tags[i]) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	using array_iterator = std::function<bool(JSValueRef, const size_t)>;
-	using object_iterator = std::function<bool(JSValueRef, JSValueRef)>;
-
-	/**
-	 * @brief Iterates over a QuickJS array value and applies a callback to each element.
-	 *
-	 * This static utility function checks if the provided JSValue is an array, retrieves its length,
-	 * and invokes the provided iterator function for each element. The iteration can be terminated
-	 * early if the iterator callback returns false.
-	 *
-	 * @param ctx   The QuickJS context.
-	 * @param val   The JSValue to iterate over (must be an array).
-	 * @param iter  The callback function (array_iterator) to execute for each element.
-	 *              It takes a JSValueRef (the element) and a size_t (the index).
-	 *              Return false to break the loop early, true to continue.
-	 *
-	 * @return The total length of the array as an int.
-	 *
-	 * @throws quickjs::type_error If the provided 'val' is not a valid array.
-	 */
-	static inline int for_each(JSContext* ctx, JSValue val, quickjs::array_iterator iter) {
-		if (!JS_IsArray(ctx, val)) {
-			throw quickjs::type_error("not an array");
-		}
-		int64_t len = 0;
-		JS_GetPropertyLength(ctx, &len, val);
-		for (size_t i = 0; i < len; i++) {
-			if (!iter(JSValueRef(ctx, JS_GetPropertyUint32(ctx, val, i)), i)) {
-				break;
-			}
-		}
-		return static_cast<int>(len);
-	}
-
-	/**
-	 * @brief Iterates over the enumerable string properties of a QuickJS object.
-	 *
-	 * This static utility function retrieves all own enumerable properties of the given object,
-	 * converts their keys and values into JSValueRef wrappers, and passes them to the provided
-	 * callback. The iteration can be terminated early if the callback returns false.
-	 *
-	 * @param ctx   The QuickJS context.
-	 * @param val   The JSValue to iterate over (must be an object).
-	 * @param iter  The callback function (object_iterator) to execute for each property.
-	 *              It takes two JSValueRef arguments: the property key (as a string) and the property value.
-	 *              Return false to break the loop early, true to continue.
-	 *
-	 * @return The number of properties iterated over as an int.
-	 *
-	 * @throws quickjs::type_error If the provided 'val' is not an object, or if
-	 *         retrieving the property names fails.
-	 */
-	static inline int enum_object(JSContext* ctx, JSValue val, quickjs::object_iterator iter) {
-		if (!JS_IsObject(val)) {
-			throw quickjs::type_error("not an object");
-		}
-		uint32_t len = 0;
-		JSPropertyEnum* tab;
-		if (JS_GetOwnPropertyNames(ctx, &tab, &len, val,
-								   JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) < 0) {
-			throw quickjs::type_error("fail to get own property names");
-		}
-		for (int i = 0; i < len; i++) {
-			if (!iter(JSValueRef(ctx, JS_AtomToString(ctx, tab[i].atom)), JSValueRef(ctx, JS_GetProperty(ctx, val, tab[i].atom)))) {
-				break;
-			}
-		}
-		JS_FreePropertyEnum(ctx, tab, len);
-		return static_cast<int>(len);
-	}
 }
 #endif //__cplusplus
 
