@@ -1408,7 +1408,7 @@ void JS_SetRuntimeThreadLocal(JSRuntime* rt, void* local);
 void* JS_GetRuntimeThreadLocal(JSRuntime* rt);
 
 /* The following function is from : https://github.com/quickjs-ng/quickjs.git */
-JS_BOOL JS_IsPromise(JSValue val);
+JS_BOOL JS_IsPromise(JSContext* ctx, JSValue val);
 void JS_PromiseMarkAsHandled(JSContext* ctx, JSValueConst promise);
 JSValue JS_NewSettledPromise(JSContext* ctx, JS_BOOL is_reject, JSValueConst value);
 

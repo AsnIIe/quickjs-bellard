@@ -61731,7 +61731,7 @@ void* JS_GetRuntimeThreadLocal(JSRuntime* rt)
     return rt->thread_local;
 }
 
-JS_BOOL JS_IsPromise(JSValue val) {
+JS_BOOL JS_IsPromise(JSContext* ctx, JSValue val) {
     if (JS_VALUE_GET_TAG(val) != JS_TAG_OBJECT)
         return FALSE;
     return JS_VALUE_GET_OBJ(val)->class_id == JS_CLASS_PROMISE;

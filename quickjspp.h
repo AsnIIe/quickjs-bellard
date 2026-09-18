@@ -257,7 +257,9 @@ namespace quickjs {
 		undefined,
 		null,
 		uninitialized,
-		exception
+		exception,
+		error,
+		promise,
 	};
 
 	template<typename Type>
@@ -692,6 +694,20 @@ namespace quickjs {
 			return JS_VALUE_GET_TAG(jsvalue) == JS_TAG_EXCEPTION;
 		}
 
+		template<>
+		bool is<JSType::error>() const {
+			if (!context)
+				return false;
+			return JS_IsError(context, jsvalue);
+		}
+
+		template<>
+		bool is<JSType::promise>() const {
+			if (!context)
+				return false;
+			return JS_IsPromise(context, jsvalue);
+		}
+
 		bool is(JSType type) const {
 			switch (type) {
 				case quickjs::JSType::object:
@@ -718,6 +734,10 @@ namespace quickjs {
 					return is<JSType::null>();
 				case quickjs::JSType::exception:
 					return is<JSType::exception>();
+				case quickjs::JSType::error:
+					return is<JSType::error>();
+				case quickjs::JSType::promise:
+					return is<JSType::promise>();
 				default:
 					break;
 			}
