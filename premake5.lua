@@ -1,3 +1,12 @@
+﻿newoption {
+    trigger = "crt-static",
+    description = "Use static CRT (/MT, /MTd) instead of dynamic CRT (/MD, /MDd)",
+    value = "0 or 1",
+    default = "0"
+}
+local CRT_STATIC = _OPTIONS["crt-static"] == "1"
+local CRT_NAME = CRT_STATIC and "MT" or "MD"
+
 local ver = "Unknow"
 
 (function()
@@ -8,7 +17,7 @@ end)()
 
 workspace "quickjs-bellard"
 	-- Premake output folder
-	location(path.join("build", _ACTION))
+	location(path.join("build/"..CRT_NAME, _ACTION))
 
 	platforms { "x86", "x64"  } 
 
@@ -28,7 +37,8 @@ workspace "quickjs-bellard"
 		defines { "DEBUG" }
 		symbols "On"
 		optimize "Off"
-		debugdir "build/bin/%{cfg.buildcfg}/%{cfg.platform}"
+		staticruntime (CRT_STATIC and "On" or "Off")  -- MTd or MDd
+		debugdir ("build/"..CRT_NAME.."/bin/%{cfg.buildcfg}/%{cfg.platform}")
 
 	-- Release configuration
 	filter { "configurations:Release" }
@@ -36,14 +46,15 @@ workspace "quickjs-bellard"
 		optimize "Speed"
 		inlining "Auto"
 		flags { "LinkTimeOptimization" }
-
+		staticruntime (CRT_STATIC and "On" or "Off")  -- MTd or MDd
+		
 	filter { "language:not C#" }
 		defines { "_CRT_SECURE_NO_WARNINGS" }
 		buildoptions { "/std:c++14" }
 		systemversion "latest"
 
 	filter { }
-		targetdir "build/bin/%{cfg.buildcfg}/%{cfg.platform}"
+		targetdir ("build/"..CRT_NAME.."/bin/%{cfg.buildcfg}/%{cfg.platform}")
 		exceptionhandling "Off"
 		rtti "Off"
 		--vectorextensions "AVX2"
@@ -52,7 +63,7 @@ workspace "quickjs-bellard"
         "thirdparty/pthread",
     }
     libdirs {
-        "thirdparty/libs/%{cfg.buildcfg}",
+        "thirdparty/libs/"..CRT_NAME.."/%{cfg.buildcfg}",
     }
 	filter "system:windows"
         links { "libwinpthread%{cfg.platform}.lib" }
@@ -119,8 +130,8 @@ project "libquickjs"
 		"quickjs-libc.c",
 		"dtoa.c"
 	}
-	targetdir "build/lib/%{cfg.buildcfg}"
-	targetname "%{prj.name}%{cfg.platform}"
+	targetdir ("build/"..CRT_NAME.."/lib/%{cfg.buildcfg}/%{cfg.platform}")
+	targetname "libes"
 -----------------------------------------------------------------------------------------------------------------------
 project "examples"
 	language "C++"
@@ -150,5 +161,5 @@ project "qjs"
 		"repl.js",
 		"repl.c"
 	}
--- Compile repl.js and save bytecode into repl.c
-prebuildcommands { "\"%{cfg.buildtarget.directory}/qjsc.exe\" -c -o \"../../repl.c\" -m \"../../repl.js\"" }
+	-- Compile repl.js and save bytecode into repl.c
+	prebuildcommands { "\"%{cfg.buildtarget.directory}/qjsc.exe\" -c -o \"../../../repl.c\" -m \"../../../repl.js\"" }
