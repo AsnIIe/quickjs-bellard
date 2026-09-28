@@ -232,8 +232,9 @@ JS_FreezeObject
 JS_GetOpaque3
 js_std_timer_mindelay
 js_std_jobs_exception
-js_std_set_asyncpoll
-js_std_del_asyncpoll
+js_std_post_asyncpoll
+js_std_send_asyncpoll
+js_std_remove_asyncpoll
 JS_IsPromise
 JS_PromiseMarkAsHandled
 JS_NewSettledPromise

@@ -47,10 +47,12 @@ int js_std_timer_mindelay(JSRuntime* rt, int* magic);
 int js_std_await_jobs(JSContext* ctx);
 /* return the pending exception or JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
 JSValue js_std_jobs_exception(JSRuntime* rt);
-/* add polling function, thread safe, all poll_func invoke in js_std_await_jobs */
-JS_BOOL js_std_set_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*), void* data);
-/* delete polling function, thread safe */
-void* js_std_del_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*));
+/* add polling function to queue, thread safe, all poll_func invoke in js_std_await_jobs, return 0 if exception */
+int js_std_post_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*), void* data);
+/* execute or add polling function to queue, thread safe, blocks the current thread until execution completed, return <= 0 if exception */
+int js_std_send_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*), void* data, int64_t timeout);
+/* remove polling function, thread safe */
+void* js_std_remove_asyncpoll(JSRuntime* rt, int id);
 void js_std_init_handlers(JSRuntime *rt);
 void js_std_free_handlers(JSRuntime *rt);
 void js_std_dump_error(JSContext *ctx);
