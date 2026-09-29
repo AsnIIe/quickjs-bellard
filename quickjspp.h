@@ -215,7 +215,6 @@ static inline void JS_FreeCStringA(JSContext* ctx, const char* str) {
 
 #if defined(__cplusplus)
 #include <iostream>
-#include <functional>
 
 namespace quickjs {
 	inline std::string format_str(const char* fmt, ...) {
@@ -260,6 +259,7 @@ namespace quickjs {
 		exception,
 		error,
 		promise,
+		proxy
 	};
 
 	template<typename Type>
@@ -708,42 +708,82 @@ namespace quickjs {
 			return JS_IsPromise(context, jsvalue);
 		}
 
+		template<>
+		bool is<JSType::proxy>() const {
+			return JS_IsProxy(jsvalue);
+		}
+
+		/**
+		 * @brief Check whether the JSValue matches the given runtime type.
+		 *
+		 * @param type  The JSType to validate against.
+		 * @return True if the current value matches the given type; false otherwise
+		 *         (including unsupported types).
+		 */
 		bool is(JSType type) const {
 			switch (type) {
-				case quickjs::JSType::object:
-					return is<JSType::object>();
-				case quickjs::JSType::array:
-					return is<JSType::array>();
-				case quickjs::JSType::integer:
-					return is<JSType::integer>();
-				case quickjs::JSType::boolean:
-					return is<JSType::boolean>();
-				case quickjs::JSType::number:
-					return is<JSType::number>();
-				case quickjs::JSType::string:
-					return is<JSType::string>();
-				case quickjs::JSType::function:
-					return is<JSType::function>();
-				case quickjs::JSType::symbol:
-					return is<JSType::symbol>();
-				case quickjs::JSType::undefined:
-					return is<JSType::undefined>();
-				case quickjs::JSType::uninitialized:
-					return is<JSType::uninitialized>();
-				case quickjs::JSType::null:
-					return is<JSType::null>();
-				case quickjs::JSType::exception:
-					return is<JSType::exception>();
-				case quickjs::JSType::error:
-					return is<JSType::error>();
-				case quickjs::JSType::promise:
-					return is<JSType::promise>();
-				default:
-					break;
+				case quickjs::JSType::object:		return is<JSType::object>();
+				case quickjs::JSType::array:		return is<JSType::array>();
+				case quickjs::JSType::integer:		return is<JSType::integer>();
+				case quickjs::JSType::boolean:		return is<JSType::boolean>();
+				case quickjs::JSType::number:		return is<JSType::number>();
+				case quickjs::JSType::string:		return is<JSType::string>();
+				case quickjs::JSType::function:		return is<JSType::function>();
+				case quickjs::JSType::symbol:		return is<JSType::symbol>();
+				case quickjs::JSType::undefined:	return is<JSType::undefined>();
+				case quickjs::JSType::uninitialized:return is<JSType::uninitialized>();
+				case quickjs::JSType::null:			return is<JSType::null>();
+				case quickjs::JSType::exception:	return is<JSType::exception>();
+				case quickjs::JSType::error:		return is<JSType::error>();
+				case quickjs::JSType::promise:		return is<JSType::promise>();
+				case quickjs::JSType::proxy:		return is<JSType::proxy>();
+				default: break;
 			}
 			return false;
 		}
 
+		/**
+		 * @brief Verify the JSValue matches the given type, throw on mismatch.
+		 *
+		 * @param type  The expected JSType to validate against.
+		 * @throws type_error If the current value does not match the given type.
+		 */
+		void require(JSType type) const {
+			if (!is(type)) {
+				throw type_error(quickjs::format_str("%s is required", type_name(type).c_str()));
+			}
+		}
+
+		/**
+		 * @brief Verify the JSValue matches the compile-time type T, throw on mismatch.
+		 *
+		 * @tparam T  The expected JSType, checked at compile time.
+		 * @throws type_error If the current value does not match the given type T.
+		 */
+		template<JSType T>
+		void require() const {
+			if (!is<T>()) {
+				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
+			}
+		}
+
+		/**
+		 * @brief Converts the current JSValue to the requested C++ type T.
+		 *
+		 * @tparam T The desired C++ type. Must be either bool, an integral type,
+		 *           or a floating-point type.
+		 *
+		 * @return The converted value as type T.
+		 *
+		 * @throws type_error If the current value does not match the type required
+		 *                    by T, if the underlying JS conversion fails, or if an
+		 *                    unsigned integer type is requested but the value is
+		 *                    negative.
+		 *
+		 * @note For integral types the value is converted via JS_ToInt32, so the
+		 *       range is limited to 32-bit signed integers. Negative values are
+		 *       rejected when T is an unsigned type.
+		 */
 		template<typename T>
 		T as() const {
 			if (!is<T>()) {
@@ -848,6 +888,51 @@ namespace quickjs {
 				return "string";
 			}
 			return typeid(T).name();
+		}
+
+		template<JSType T>
+		std::string type_name() const noexcept {
+			switch (T) {
+				case quickjs::JSType::object:		return "object";
+				case quickjs::JSType::array:		return "array";
+				case quickjs::JSType::integer:		return "integer";
+				case quickjs::JSType::boolean:		return "boolean";
+				case quickjs::JSType::number:		return "number";
+				case quickjs::JSType::string:		return "string";
+				case quickjs::JSType::function:		return "function";
+				case quickjs::JSType::symbol:		return "symbol";
+				case quickjs::JSType::undefined:	return "undefined";
+				case quickjs::JSType::uninitialized:return "uninitialized";
+				case quickjs::JSType::null:			return "null";
+				case quickjs::JSType::exception:	return "exception";
+				case quickjs::JSType::error:		return "error";
+				case quickjs::JSType::promise:		return "promise";
+				case quickjs::JSType::proxy:		return "proxy";
+				default: break;
+			}
+			return "[type mismatch]";
+		}
+
+		std::string type_name(JSType type) const noexcept {
+			switch (type) {
+				case quickjs::JSType::object:       return type_name<JSType::object>();
+				case quickjs::JSType::array:        return type_name<JSType::array>();
+				case quickjs::JSType::integer:      return type_name<JSType::integer>();
+				case quickjs::JSType::boolean:      return type_name<JSType::boolean>();
+				case quickjs::JSType::number:       return type_name<JSType::number>();
+				case quickjs::JSType::string:       return type_name<JSType::string>();
+				case quickjs::JSType::function:     return type_name<JSType::function>();
+				case quickjs::JSType::symbol:       return type_name<JSType::symbol>();
+				case quickjs::JSType::undefined:    return type_name<JSType::undefined>();
+				case quickjs::JSType::uninitialized:return type_name<JSType::uninitialized>();
+				case quickjs::JSType::null:         return type_name<JSType::null>();
+				case quickjs::JSType::exception:    return type_name<JSType::exception>();
+				case quickjs::JSType::error:        return type_name<JSType::error>();
+				case quickjs::JSType::promise:      return type_name<JSType::promise>();
+				case quickjs::JSType::proxy:        return type_name<JSType::proxy>();
+				default: break;
+			}
+			return "[type mismatch]";
 		}
 
 		JSValue jsvalue = JS_UNDEFINED;
