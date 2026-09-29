@@ -53,6 +53,7 @@
 #define isatty _isatty
 #define read _read
 #define write _write
+typedef intptr_t ssize_t;
 #else
 #include <dlfcn.h>
 #include <termios.h>
