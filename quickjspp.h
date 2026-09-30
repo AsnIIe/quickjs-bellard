@@ -499,6 +499,9 @@ namespace quickjs {
 	};
 
 	class JSPropertyRef;
+	class JSValueRef;
+
+	std::string to_string(const JSValueRef& ref);
 
 	class JSValueRef {
 	public:
@@ -974,6 +977,8 @@ namespace quickjs {
 
 		JSValue jsvalue = JS_UNDEFINED;
 		JSContext* context = nullptr;
+
+		friend std::string to_string(const JSValueRef& ref);
 	};
 
 	class JSPropertyRef :public JSValueRef {
@@ -1376,6 +1381,27 @@ namespace quickjs {
 		int argumentsGroupId;
 		bool isGroupRegisted;
 	};
+
+	/**
+	 * @brief Converts a JSValueRef to a std::string.like exception/undefined or others
+	 * @param ref The JSValueRef to convert.
+	 * @return The string representation, or an empty string on failure.
+	 */
+	static inline std::string to_string(const quickjs::JSValueRef& ref) {
+		const char* cstr;
+		if (ref.is<JSType::exception>()) {
+			JSValue err = JS_GetException(ref.context);
+			cstr = JS_ToCString(ref.context, err);
+			JS_FreeValue(ref.context, err);
+		} else {
+			cstr = JS_ToCString(ref.context, ref.jsvalue);
+		}
+		if (!cstr)
+			return std::string();
+		std::string result(cstr);
+		JS_FreeCString(ref.context, cstr);
+		return result;
+	}
 }
 #endif //__cplusplus
 
