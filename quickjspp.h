@@ -650,9 +650,7 @@ namespace quickjs {
 
 		template<>
 		bool is<JSType::object>() const {
-			if (!context)
-				return false;
-			return (JS_VALUE_GET_TAG(jsvalue) == JS_TAG_OBJECT) && !JS_IsArray(context, jsvalue);
+			return (JS_VALUE_GET_TAG(jsvalue) == JS_TAG_OBJECT);
 		}
 
 		template<>
@@ -722,21 +720,21 @@ namespace quickjs {
 		 */
 		bool is(JSType type) const {
 			switch (type) {
-				case quickjs::JSType::object:		return is<JSType::object>();
-				case quickjs::JSType::array:		return is<JSType::array>();
-				case quickjs::JSType::integer:		return is<JSType::integer>();
-				case quickjs::JSType::boolean:		return is<JSType::boolean>();
-				case quickjs::JSType::number:		return is<JSType::number>();
-				case quickjs::JSType::string:		return is<JSType::string>();
-				case quickjs::JSType::function:		return is<JSType::function>();
-				case quickjs::JSType::symbol:		return is<JSType::symbol>();
-				case quickjs::JSType::undefined:	return is<JSType::undefined>();
+				case quickjs::JSType::object:       return is<JSType::object>();
+				case quickjs::JSType::array:        return is<JSType::array>();
+				case quickjs::JSType::integer:      return is<JSType::integer>();
+				case quickjs::JSType::boolean:      return is<JSType::boolean>();
+				case quickjs::JSType::number:       return is<JSType::number>();
+				case quickjs::JSType::string:       return is<JSType::string>();
+				case quickjs::JSType::function:     return is<JSType::function>();
+				case quickjs::JSType::symbol:       return is<JSType::symbol>();
+				case quickjs::JSType::undefined:    return is<JSType::undefined>();
 				case quickjs::JSType::uninitialized:return is<JSType::uninitialized>();
-				case quickjs::JSType::null:			return is<JSType::null>();
-				case quickjs::JSType::exception:	return is<JSType::exception>();
-				case quickjs::JSType::error:		return is<JSType::error>();
-				case quickjs::JSType::promise:		return is<JSType::promise>();
-				case quickjs::JSType::proxy:		return is<JSType::proxy>();
+				case quickjs::JSType::null:         return is<JSType::null>();
+				case quickjs::JSType::exception:    return is<JSType::exception>();
+				case quickjs::JSType::error:        return is<JSType::error>();
+				case quickjs::JSType::promise:      return is<JSType::promise>();
+				case quickjs::JSType::proxy:        return is<JSType::proxy>();
 				default: break;
 			}
 			return false;
@@ -866,6 +864,45 @@ namespace quickjs {
 		template<>
 		char* as<char*>(char* default_val, bool throw_err) const = delete;
 
+		template<typename T>
+		T stringify() const = delete;
+
+		template<>
+		std::string stringify<std::string>() const {
+			if (is<JSType::string>()) {
+				return as<std::string>();
+			}
+			JSValueRef jsstr(context, JS_JSONStringify(context, jsvalue, JS_UNDEFINED, JS_UNDEFINED));
+			if (!jsstr.is<JSType::string>()) {
+				throw type_error("stringify error");
+			}
+			return jsstr.as<std::string>();
+		}
+
+		template<>
+		quickjs::JSCString stringify<quickjs::JSCString>() const {
+			if (is<JSType::string>()) {
+				return as<quickjs::JSCString>();
+			}
+			JSValueRef jsstr(context, JS_JSONStringify(context, jsvalue, JS_UNDEFINED, JS_UNDEFINED));
+			if (!jsstr.is<JSType::string>()) {
+				throw type_error("stringify error");
+			}
+			return jsstr.as<quickjs::JSCString>();
+		}
+
+		template<>
+		quickjs::JSCStringA stringify<quickjs::JSCStringA>() const {
+			if (is<JSType::string>()) {
+				return as<quickjs::JSCStringA>();
+			}
+			JSValueRef jsstr(context, JS_JSONStringify(context, jsvalue, JS_UNDEFINED, JS_UNDEFINED));
+			if (!jsstr.is<JSType::string>()) {
+				throw type_error("stringify error");
+			}
+			return jsstr.as<quickjs::JSCStringA>();
+		}
+
 	protected:
 		virtual quickjs::type_error type_error(const std::string& msg) const {
 			return quickjs::type_error(msg);
@@ -893,21 +930,21 @@ namespace quickjs {
 		template<JSType T>
 		std::string type_name() const noexcept {
 			switch (T) {
-				case quickjs::JSType::object:		return "object";
-				case quickjs::JSType::array:		return "array";
-				case quickjs::JSType::integer:		return "integer";
-				case quickjs::JSType::boolean:		return "boolean";
-				case quickjs::JSType::number:		return "number";
-				case quickjs::JSType::string:		return "string";
-				case quickjs::JSType::function:		return "function";
-				case quickjs::JSType::symbol:		return "symbol";
-				case quickjs::JSType::undefined:	return "undefined";
+				case quickjs::JSType::object:       return "object";
+				case quickjs::JSType::array:        return "array";
+				case quickjs::JSType::integer:      return "integer";
+				case quickjs::JSType::boolean:      return "boolean";
+				case quickjs::JSType::number:       return "number";
+				case quickjs::JSType::string:       return "string";
+				case quickjs::JSType::function:     return "function";
+				case quickjs::JSType::symbol:       return "symbol";
+				case quickjs::JSType::undefined:    return "undefined";
 				case quickjs::JSType::uninitialized:return "uninitialized";
-				case quickjs::JSType::null:			return "null";
-				case quickjs::JSType::exception:	return "exception";
-				case quickjs::JSType::error:		return "error";
-				case quickjs::JSType::promise:		return "promise";
-				case quickjs::JSType::proxy:		return "proxy";
+				case quickjs::JSType::null:         return "null";
+				case quickjs::JSType::exception:    return "exception";
+				case quickjs::JSType::error:        return "error";
+				case quickjs::JSType::promise:      return "promise";
+				case quickjs::JSType::proxy:        return "proxy";
 				default: break;
 			}
 			return "[type mismatch]";
