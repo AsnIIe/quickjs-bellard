@@ -114,6 +114,8 @@ JS_PreventExtensions
 JS_PrintValue
 JS_PrintValueRT
 JS_PrintValueSetDefaultOptions
+JS_PromiseState
+JS_PromiseResult
 JS_ReadObject
 JS_RecoverySnapshot
 JS_ResolveModule
