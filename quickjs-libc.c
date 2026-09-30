@@ -4680,6 +4680,7 @@ int js_std_await_jobs(JSContext* ctx) {
 #else
             SetEvent(tp->done_event);
 #endif
+            list_del(&tp->link);
         }
     }
 
@@ -4715,8 +4716,11 @@ int js_std_await_jobs(JSContext* ctx) {
     if (os_poll_func)
         rc = os_poll_func(ctx, FALSE) + 1;/* must invoke Sleep(min_delay) by user */
 
-    if (rc == 0) {
+    if (rc == 0) {/* check pending jobs is empty again */
         rc = JS_IsJobPending(rt) ? 1 : rc;
+    }
+    if (rc == 0) {/* check async poll is empty */
+        rc = !list_empty(&ts->asyncpoll_list) ? 1 : rc;
     }
     thread_unlock(&ts->mutex_t);
     return rc;
@@ -4830,7 +4834,6 @@ int js_std_send_asyncpoll(JSRuntime* rt, JS_BOOL(*poll_func)(void*), void* data,
 #endif
 
     thread_lock(&ts->mutex_t);
-    list_del(&tp->link);
     free(tp);
     thread_unlock(&ts->mutex_t);
     return ret;
