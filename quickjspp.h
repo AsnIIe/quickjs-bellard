@@ -744,16 +744,35 @@ namespace quickjs {
 		}
 
 		/**
-		 * @brief Verify the JSValue matches the given type, throw on mismatch.
+		 * @brief Verifies that the JSValue matches any of the given types; throws on mismatch.
 		 *
-		 * @param type  The expected JSType to validate against.
-		 * @throws type_error If the current value does not match the given type.
+		 * @param types  The expected JSType(s) to validate against. The check passes if the
+		 *               value matches at least one of them.
+		 * @return The index of the first matching type in @p types.
+		 * @throws type_error If the current value matches none of the given types.
 		 */
-		void require(JSType type) const {
-			if (!is(type)) {
-				throw type_error(quickjs::format_str("%s is required", type_name(type).c_str()));
+		template<typename... Args, typename = std::enable_if_t<std::conjunction<std::is_same<Args, JSType>...>::value>>
+		size_t require(Args... types) const {
+			constexpr size_t arg_size = sizeof...(Args);
+			bool matched = false;
+			std::string names;
+			size_t i = 0;
+			const JSType tags[] = { static_cast<JSType>(types)... };
+			for (; i < arg_size; i++) {
+				names = names.empty() ? type_name(tags[i]) : names + "|" + type_name(tags[i]);
+				if (is(tags[i])) {
+					matched = true;
+					break;
+				}
 			}
+			if (!matched) {
+				throw type_error(quickjs::format_str("%s is required", names.c_str()));
+			}
+			return i;
 		}
+
+		template<>
+		size_t require() const = delete;
 
 		/**
 		 * @brief Verify the JSValue matches the compile-time type T, throw on mismatch.
