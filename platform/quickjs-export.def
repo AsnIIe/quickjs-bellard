@@ -247,3 +247,5 @@ JS_AddRuntimeFinalizer
 JS_SetRuntimeThreadLocal
 JS_GetRuntimeThreadLocal
 JS_GetClassID2
+JS_IsAsyncFunction
+

@@ -1445,6 +1445,7 @@ JSValue JS_NewProxy(JSContext* ctx, JSValueConst target,
 typedef void JSRuntimeFinalizer(JSRuntime*, void*);
 int JS_AddRuntimeFinalizer(JSRuntime* rt,
                            JSRuntimeFinalizer* finalizer, void* arg);
+JS_BOOL JS_IsAsyncFunction(JSContext* ctx, JSValueConst val);
 
 #undef js_unlikely
 #undef js_force_inline

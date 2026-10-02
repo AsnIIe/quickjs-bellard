@@ -61851,3 +61851,7 @@ int JS_AddRuntimeFinalizer(JSRuntime* rt, JSRuntimeFinalizer* finalizer,
     rt->finalizers = fs;
     return 0;
 }
+
+JS_BOOL JS_IsAsyncFunction(JSContext* ctx, JSValueConst val) {
+    return JS_CLASS_ASYNC_FUNCTION == JS_GetClassID(val);
+}
