@@ -4551,7 +4551,7 @@ JSValue js_std_await(JSContext *ctx, JSValue obj)
         } else if (state == JS_PROMISE_PENDING) {
             /* execute all known jobs */
             int err = js_std_await_jobs(ctx);
-            if (err == -4 || err == -5)
+            if (err == -4)
                 ret = JS_EXCEPTION;
         } else {
             /* not a promise */
@@ -4688,19 +4688,6 @@ int js_std_await_jobs(JSContext* ctx) {
         //no more jobs
         if (rc == 0)
             break;
-    }
-
-    //like js_std_promise_rejection_check.
-    JSRejectedPromiseEntry* rp = NULL;
-    list_for_each(el, &ts->rejected_promise_list) {
-        rp = list_entry(el, JSRejectedPromiseEntry, link);
-        break;
-    }
-    if (rp) {
-        JS_Throw(ctx, JS_DupValue(ctx, rp->reason));
-        JS_PromiseMarkAsHandled(ctx, rp->promise);
-        thread_unlock(&ts->mutex_t);
-        return -5;
     }
 
     int rc = 1;
