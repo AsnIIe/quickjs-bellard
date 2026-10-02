@@ -61855,3 +61855,8 @@ int JS_AddRuntimeFinalizer(JSRuntime* rt, JSRuntimeFinalizer* finalizer,
 JS_BOOL JS_IsAsyncFunction(JSContext* ctx, JSValueConst val) {
     return JS_CLASS_ASYNC_FUNCTION == JS_GetClassID(val);
 }
+
+JS_BOOL JS_IsArrayBuffer(JSContext * ctx, JSValueConst val) {
+    JSClassID classId = JS_GetClassID(val);
+    return JS_CLASS_ARRAY_BUFFER == classId || JS_CLASS_SHARED_ARRAY_BUFFER == classId;
+}

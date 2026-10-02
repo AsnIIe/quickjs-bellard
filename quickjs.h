@@ -1407,6 +1407,8 @@ void JS_SetRuntimeThreadLocal(JSRuntime* rt, void* local);
 /* only exported for quickjs-libc */
 void* JS_GetRuntimeThreadLocal(JSRuntime* rt);
 
+JS_BOOL JS_IsArrayBuffer(JSContext* ctx, JSValueConst val);
+
 /* The following function is from : https://github.com/quickjs-ng/quickjs.git */
 JS_BOOL JS_IsPromise(JSContext* ctx, JSValue val);
 void JS_PromiseMarkAsHandled(JSContext* ctx, JSValueConst promise);
