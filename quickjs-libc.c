@@ -4549,17 +4549,10 @@ JSValue js_std_await(JSContext *ctx, JSValue obj)
             JS_FreeValue(ctx, obj);
             break;
         } else if (state == JS_PROMISE_PENDING) {
-            int err;
-            err = JS_ExecutePendingJob(JS_GetRuntime(ctx), NULL);
-            if (err < 0) {
-                js_std_dump_error(ctx);
-            }
-            if (err == 0) {
-                js_std_promise_rejection_check(ctx);
-
-                if (os_poll_func)
-                    os_poll_func(ctx, FALSE);
-            }
+            /* execute all known jobs */
+            int err = js_std_await_jobs(ctx);
+            if (err == -4 || err == -5)
+                ret = JS_EXCEPTION;
         } else {
             /* not a promise */
             ret = obj;
@@ -4689,7 +4682,6 @@ int js_std_await_jobs(JSContext* ctx) {
         int rc = JS_ExecutePendingJob(JS_GetRuntime(ctx), NULL);
         //exception
         if (rc < 0) {
-            js_set_jobs_exception(rt, JS_GetException(ctx));
             thread_unlock(&ts->mutex_t);
             return -4;
         }
@@ -4705,7 +4697,7 @@ int js_std_await_jobs(JSContext* ctx) {
         break;
     }
     if (rp) {
-        js_set_jobs_exception(rt, JS_DupValue(ctx, rp->reason));
+        JS_Throw(ctx, JS_DupValue(ctx, rp->reason));
         JS_PromiseMarkAsHandled(ctx, rp->promise);
         thread_unlock(&ts->mutex_t);
         return -5;
@@ -4726,8 +4718,12 @@ int js_std_await_jobs(JSContext* ctx) {
     return rc;
 }
 
-/* return the pending exception or JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
-JSValue js_std_jobs_exception(JSRuntime* rt) {
+/* return JS_GetException or the pending exception/JS_UNINITIALIZED from JSThreadState (cannot be called twice) */
+JSValue js_std_jobs_exception(JSContext* ctx) {
+    if (JS_HasException(ctx)) {
+        return JS_GetException(ctx);
+    }
+    JSRuntime* rt = JS_GetRuntime(ctx);
     JSValue val;
     JSThreadState* ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
     if (!ts)
