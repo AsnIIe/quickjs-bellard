@@ -1455,11 +1455,11 @@ JS_BOOL JS_IsAsyncFunction(JSContext* ctx, JSValueConst val);
 #endif
 
 #if defined(__cplusplus) && !defined(JS_NAN_BOXING)
-bool operator==(const ::JSValue& v1, const ::JSValue& v2) {
+inline bool operator==(const ::JSValue& v1, const ::JSValue& v2) {
     return memcmp(&v1, &v2, sizeof(JSValue)) == 0;
 }
 
-bool operator!=(const ::JSValue& v1, const ::JSValue& v2) {
+inline bool operator!=(const ::JSValue& v1, const ::JSValue& v2) {
     return !(v1 == v2);
 }
 #endif
