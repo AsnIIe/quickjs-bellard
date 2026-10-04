@@ -249,4 +249,6 @@ JS_GetRuntimeThreadLocal
 JS_GetClassID2
 JS_IsAsyncFunction
 JS_IsArrayBuffer
+js_std_has_rejected_promise
+js_std_rejected_promise_reason
 

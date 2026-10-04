@@ -4847,6 +4847,33 @@ void* js_std_remove_asyncpoll(JSRuntime* rt, int id) {
     return data;
 }
 
+JS_BOOL js_std_has_rejected_promise(JSContext * ctx) {
+    JSRuntime *rt = JS_GetRuntime(ctx);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
+    JSValue reason = JS_UNDEFINED;
+    if (!ts)
+        return FALSE;
+    return !list_empty(&ts->rejected_promise_list);
+}
+
+JSValue js_std_rejected_promise_reason(JSContext * ctx) {
+    JSRuntime *rt = JS_GetRuntime(ctx);
+    JSThreadState *ts = (JSThreadState*)JS_GetRuntimeThreadLocal(rt);
+    JSValue reason = JS_UNDEFINED;
+    if (!ts)
+        return reason;
+
+    struct list_head *el;
+    if (unlikely(!list_empty(&ts->rejected_promise_list))) {
+        list_for_each(el, &ts->rejected_promise_list) {
+            JSRejectedPromiseEntry *rp = list_entry(el, JSRejectedPromiseEntry, link);
+            reason = JS_DupValue(ctx, rp->reason);
+            JS_PromiseMarkAsHandled(ctx, rp->promise);
+        }
+    }
+    return reason;
+}
+
 void js_std_eval_binary(JSContext *ctx, const uint8_t *buf, size_t buf_len,
                         int load_only)
 {

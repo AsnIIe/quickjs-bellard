@@ -69,6 +69,10 @@ void js_std_eval_binary(JSContext *ctx, const uint8_t *buf, size_t buf_len,
 void js_std_eval_binary_json_module(JSContext *ctx,
                                     const uint8_t *buf, size_t buf_len,
                                     const char *module_name);
+
+JS_BOOL js_std_has_rejected_promise(JSContext *ctx);
+/* retrieve the rejection reason of an unhandled rejected promise, and mark the rejected promise as handled */
+JSValue js_std_rejected_promise_reason(JSContext *ctx);
 void js_std_promise_rejection_tracker(JSContext *ctx, JSValueConst promise,
                                       JSValueConst reason,
                                       JS_BOOL is_handled, void *opaque);
