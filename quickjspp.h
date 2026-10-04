@@ -587,7 +587,7 @@ namespace quickjs {
 
 		/*Note: When using the class quickjs::JSPropertyRef, it must be defined after quickjs::JSPropertyRef */
 		//Note: If is object
-		quickjs::JSPropertyRef operator[](std::string key) const;
+		quickjs::JSPropertyRef operator[](const std::string& key) const;
 		//Note: If is object
 		quickjs::JSPropertyRef operator[](const char* key) const;
 		//Note: If is object
@@ -598,12 +598,12 @@ namespace quickjs {
 
 		//Note: If is array, get property .length
 		size_t length() const {
-			if (!is<JSType::array>()) {
-				throw type_error("array is required");
+			if (!is<JSType::string>() && !is<JSType::array>() && !is<JSType::function>()) {
+				throw type_error(quickjs::format_str("cannot read property 'length' of %s", type_name(type()).c_str()));
 			}
 			int64_t len;
 			if (JS_GetPropertyLength(context, &len, jsvalue) == -1) {
-				throw type_error("fail to get .length");
+				throw type_error("failed to read property 'length'");
 			}
 			return static_cast<size_t>(len);
 		}
@@ -741,50 +741,6 @@ namespace quickjs {
 				default: break;
 			}
 			return false;
-		}
-
-		/**
-		 * @brief Verifies that the JSValue matches any of the given types; throws on mismatch.
-		 *
-		 * @param types  The expected JSType(s) to validate against. The check passes if the
-		 *               value matches at least one of them.
-		 * @return The index of the first matching type in @p types.
-		 * @throws type_error If the current value matches none of the given types.
-		 */
-		template<typename... Args, typename = std::enable_if_t<std::conjunction<std::is_same<Args, JSType>...>::value>>
-		size_t require(Args... types) const {
-			constexpr size_t arg_size = sizeof...(Args);
-			bool matched = false;
-			std::string names;
-			size_t i = 0;
-			const JSType tags[] = { static_cast<JSType>(types)... };
-			for (; i < arg_size; i++) {
-				names = names.empty() ? type_name(tags[i]) : names + "|" + type_name(tags[i]);
-				if (is(tags[i])) {
-					matched = true;
-					break;
-				}
-			}
-			if (!matched) {
-				throw type_error(quickjs::format_str("%s is required", names.c_str()));
-			}
-			return i;
-		}
-
-		template<>
-		size_t require() const = delete;
-
-		/**
-		 * @brief Verify the JSValue matches the compile-time type T, throw on mismatch.
-		 *
-		 * @tparam T  The expected JSType, checked at compile time.
-		 * @throws type_error If the current value does not match the given type T.
-		 */
-		template<JSType T>
-		void require() const {
-			if (!is<T>()) {
-				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
-			}
 		}
 
 		/**
@@ -930,7 +886,6 @@ namespace quickjs {
 			return quickjs::type_error(msg);
 		}
 
-	private:
 		template<typename T>
 		std::string type_name() const noexcept {
 			if (std::is_same_v<std::decay_t<T>, bool>) {
@@ -994,6 +949,33 @@ namespace quickjs {
 			return "[type mismatch]";
 		}
 
+		/**
+		* @brief Returns the concrete JavaScript type of the wrapped value.
+		* @return The first matching JSType, or JSType::uninitialized if none matched.
+		* @warning Order matters: test more specific types before general ones
+		*          (e.g. array/function before object), since probes may overlap.
+		* @see is()
+		*/
+		JSType type() const {
+			if (is<quickjs::JSType::object>())       return quickjs::JSType::object;
+			if (is<quickjs::JSType::array>())        return quickjs::JSType::array;
+			if (is<quickjs::JSType::integer>())      return quickjs::JSType::integer;
+			if (is<quickjs::JSType::boolean>())      return quickjs::JSType::boolean;
+			if (is<quickjs::JSType::number>())       return quickjs::JSType::number;
+			if (is<quickjs::JSType::string>())       return quickjs::JSType::string;
+			if (is<quickjs::JSType::function>())     return quickjs::JSType::function;
+			if (is<quickjs::JSType::symbol>())       return quickjs::JSType::symbol;
+			if (is<quickjs::JSType::undefined>())    return quickjs::JSType::undefined;
+			if (is<quickjs::JSType::uninitialized>())return quickjs::JSType::uninitialized;
+			if (is<quickjs::JSType::null>())         return quickjs::JSType::null;
+			if (is<quickjs::JSType::exception>())    return quickjs::JSType::exception;
+			if (is<quickjs::JSType::error>())        return quickjs::JSType::error;
+			if (is<quickjs::JSType::promise>())      return quickjs::JSType::promise;
+			if (is<quickjs::JSType::proxy>())        return quickjs::JSType::proxy;
+			return quickjs::JSType::uninitialized;
+		}
+
+	private:
 		JSValue jsvalue = JS_UNDEFINED;
 		JSContext* context = nullptr;
 
@@ -1071,7 +1053,7 @@ namespace quickjs {
 	=============================================[ JSValueRef ]===============================================
 	*/
 	/* Marking as inline is mandatory, otherwise redefining when linking */
-	inline quickjs::JSPropertyRef quickjs::JSValueRef::operator[](std::string key) const {
+	inline quickjs::JSPropertyRef quickjs::JSValueRef::operator[](const std::string& key) const {
 		return operator[](key.c_str());
 	}
 
@@ -1153,6 +1135,50 @@ namespace quickjs {
 		virtual ~JSArgumentRef() {
 			argument_idx = -1;
 			no_arguments = true;
+		}
+
+		/**
+		* @brief Verifies that the JSValue matches any of the given types; throws on mismatch.
+		*
+		* @param types  The expected JSType(s) to validate against. The check passes if the
+		*               value matches at least one of them.
+		* @return The index of the first matching type in @p types.
+		* @throws type_error If the current value matches none of the given types.
+		*/
+		template<typename... Args, typename = std::enable_if_t<std::conjunction<std::is_same<Args, JSType>...>::value>>
+		size_t require(Args... types) const {
+			constexpr size_t arg_size = sizeof...(Args);
+			bool matched = false;
+			std::string names;
+			size_t i = 0;
+			const JSType tags[] = { static_cast<JSType>(types)... };
+			for (; i < arg_size; i++) {
+				names = names.empty() ? type_name(tags[i]) : names + "|" + type_name(tags[i]);
+				if (is(tags[i])) {
+					matched = true;
+					break;
+				}
+			}
+			if (!matched) {
+				throw type_error(quickjs::format_str("%s is required", names.c_str()));
+			}
+			return i;
+		}
+
+		template<>
+		size_t require() const = delete;
+
+		/**
+		* @brief Verify the JSValue matches the compile-time type T, throw on mismatch.
+		*
+		* @tparam T  The expected JSType, checked at compile time.
+		* @throws type_error If the current value does not match the given type T.
+		*/
+		template<JSType T>
+		void require() const {
+			if (!is<T>()) {
+				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
+			}
 		}
 
 	protected:
