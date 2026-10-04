@@ -305,7 +305,7 @@ static void js_qjs_loop(JSContext* ctx)
     int ret = 0;
     while (ret = js_std_await_jobs(ctx)) {
         if (ret < 0) {
-            JSValue err = js_std_jobs_exception(JS_GetRuntime(ctx));
+            JSValue err = js_std_jobs_exception(ctx);
             js_qjs_dump_error(ctx, err);
             JS_FreeValue(ctx, err);
         }

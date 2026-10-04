@@ -2418,7 +2418,6 @@ static JS_BOOL call_handler(JSContext *ctx, JSValueConst func, JSValueConst this
     JS_FreeValue(ctx, func1);
     if (JS_IsException(ret)) {
         js_set_jobs_exception(rt, JS_GetException(ctx));
-        js_std_dump_error1(ctx, ts->current_exception);
         
         JS_RecoverySnapshot(rt, &snapshot);
         success = FALSE;
