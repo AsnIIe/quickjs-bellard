@@ -215,6 +215,10 @@ static inline void JS_FreeCStringA(JSContext* ctx, const char* str) {
 
 #if defined(__cplusplus)
 #include <iostream>
+#include <array>
+#include <map>
+#include <set>
+#include <vector>
 
 namespace quickjs {
 	inline std::string format_str(const char* fmt, ...) {
@@ -243,6 +247,96 @@ namespace quickjs {
 	private:
 		std::string msg_;
 	};
+
+	namespace type_traits {
+		template <typename T>
+		struct is_std_vector : std::false_type {};
+
+		template <typename T, typename Alloc>
+		struct is_std_vector<std::vector<T, Alloc>> : std::true_type {
+			using value_type = T;
+			using allocator_type = Alloc;
+		};
+
+		template <typename T>
+		struct is_std_map : std::false_type {};
+
+		template <typename Key, typename T, typename Compare, typename Alloc>
+		struct is_std_map<std::map<Key, T, Compare, Alloc>> : std::true_type {
+			using key_type = Key;
+			using mapped_type = T;
+			using value_type = std::pair<const Key, T>;
+			using key_compare = Compare;
+			using allocator_type = Alloc;
+		};
+
+		template <typename T>
+		struct is_std_set : std::false_type {};
+
+		template <typename Key, typename Compare, typename Alloc>
+		struct is_std_set<std::set<Key, Compare, Alloc>> : std::true_type {
+			using key_type = Key;
+			using value_type = Key;
+			using key_compare = Compare;
+			using allocator_type = Alloc;
+		};
+
+		template <typename T>
+		struct is_std_array : std::false_type {};
+
+		template <typename T, std::size_t N>
+		struct is_std_array<std::array<T, N>> : std::true_type {
+			using value_type = T;
+			static constexpr std::size_t size = N;
+		};
+
+		template <typename T>
+		struct is_std_tuple : std::false_type {};
+
+		template <typename... Args>
+		struct is_std_tuple<std::tuple<Args...>> : std::true_type {
+			using types = std::tuple<Args...>;
+			static constexpr std::size_t size = sizeof...(Args);
+		};
+
+		template <typename T>
+		struct template_types {
+			static constexpr bool valid = false;
+		};
+
+		template <template <typename...> class Tmpl, typename... Args>
+		struct template_types<Tmpl<Args...>> {
+			static constexpr bool valid = true;
+			using type = std::tuple<Args...>;
+		};
+
+		template <typename T, std::size_t N>
+		struct template_types<std::array<T, N>> {
+			static constexpr bool valid = true;
+			using type = std::tuple<T>;
+		};
+
+		template <typename T>
+		using template_types_t = typename quickjs::type_traits::template_types<T>::type;
+
+		template <typename T, std::size_t N>
+		using template_type_t = typename std::tuple_element<N, template_types_t<T>>::type;
+
+		namespace types {
+			template <typename Container>
+			using element_t = template_type_t<Container, 0>;
+
+			template <typename Map>
+			using key_t = template_type_t<Map, 0>;
+
+			template <typename Map>
+			using mapped_t = template_type_t<Map, 1>;
+
+			template <typename Container>
+			using allocator_t = template_type_t<Container,
+				std::tuple_size<template_types_t<Container>>::value - 1>;
+		}
+	}
 
 	enum class JSType {
 		object,
@@ -326,11 +420,11 @@ namespace quickjs {
 	};
 
 	template<typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
-	static inline quickjs::JSMemRef<T> make_unique(JSContext* ctx, size_t size = 1) {
+	inline quickjs::JSMemRef<T> make_unique(JSContext* ctx, size_t size = 1) {
 		return quickjs::JSMemRef<T>(ctx, static_cast<T*>(js_mallocz(ctx, sizeof(T) * size)));
 	}
 	template<typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
-	static inline quickjs::JSMemRef<T> make_unique(JSRuntime* rt, size_t size = 1) {
+	inline quickjs::JSMemRef<T> make_unique(JSRuntime* rt, size_t size = 1) {
 		return quickjs::JSMemRef<T>(rt, static_cast<T*>(js_mallocz_rt(rt, sizeof(T) * size)));
 	}
 
@@ -608,6 +702,12 @@ namespace quickjs {
 			return static_cast<size_t>(len);
 		}
 
+		/**
+		 * @note For std::map, this is stricter than is<JSType::object>():
+		 *       it requires a plain object (checked via JS_IsObjectPlain, which
+		 *       inspects the object's class id), whereas is<JSType::object>()
+		 *       only checks that the tag is JS_TAG_OBJECT.
+		 */
 		template<typename T>
 		bool is() const {
 			if (std::is_same_v<std::decay_t<T>, bool>) {
@@ -622,6 +722,15 @@ namespace quickjs {
 					   || std::is_same_v<std::decay_t<T>, quickjs::JSCString>
 					   || std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>) {
 				return is<JSType::string>();
+			} else if (type_traits::is_std_array<T>::value
+					   || type_traits::is_std_set<T>::value
+					   || type_traits::is_std_vector<T>::value
+					   || type_traits::is_std_tuple<T>::value) {
+				return is<JSType::array>();
+			} else if (type_traits::is_std_map<T>::value) {
+				if (!context)
+					return false;
+				return JS_IsObjectPlain(context, jsvalue);
 			}
 			return false;
 		}
@@ -765,25 +874,7 @@ namespace quickjs {
 			if (!is<T>()) {
 				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
 			}
-			if (std::is_same_v<std::decay_t<T>, bool>) {
-				return static_cast<T>(JS_ToBool(context, jsvalue));
-			} else if (std::is_integral_v<std::decay_t<T>>) {
-				int val;
-				if (JS_ToInt32(context, &val, jsvalue) == -1) {
-					throw type_error("type conversion error");
-				}
-				if (std::is_unsigned_v<T> && val < 0) {
-					throw type_error("positive integer is required");
-				}
-				return static_cast<T>(val);
-			} else if (std::is_floating_point_v<std::decay_t<T>>) {
-				double val;
-				if (JS_ToFloat64(context, &val, jsvalue) == -1) {
-					throw type_error("type conversion error");
-				}
-				return static_cast<T>(val);
-			}
-			throw type_error("type mismatch");
+			return as_impl<T>();
 		}
 
 		template<>
@@ -900,8 +991,15 @@ namespace quickjs {
 					   || std::is_same_v<std::decay_t<T>, quickjs::JSCString>
 					   || std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>) {
 				return "string";
+			} else if (type_traits::is_std_array<T>::value
+					   || type_traits::is_std_set<T>::value
+					   || type_traits::is_std_vector<T>::value
+					   || type_traits::is_std_tuple<T>::value) {
+				return "array";
+			} else if (type_traits::is_std_map<T>::value) {
+				return "object";
 			}
-			return typeid(T).name();
+			return "[type mismatch]";
 		}
 
 		template<JSType T>
@@ -976,6 +1074,155 @@ namespace quickjs {
 		}
 
 	private:
+		template<typename Map>
+		std::enable_if_t<type_traits::is_std_map<Map>::value, Map>
+			as_impl() const {
+			using key_type = type_traits::types::key_t<Map>;
+			using val_type = type_traits::types::mapped_t<Map>;
+
+			Map map{};
+			uint32_t len = 0;
+			JSPropertyEnum* tab;
+			if (JS_GetOwnPropertyNames(context, &tab, &len, jsvalue,
+									   JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) < 0) {
+				throw type_error("fail to read property names");
+			}
+			struct JSPropertyEnumGuard {
+				JSContext* ctx;
+				JSPropertyEnum* tab;
+				uint32_t len;
+				~JSPropertyEnumGuard() {
+					if (tab) JS_FreePropertyEnum(ctx, tab, len);
+				}
+			} peg{ context, tab, len };
+
+			for (int i = 0; i < len; i++) {
+				JSValueRef key(context, JS_AtomToValue(context, tab[i].atom));
+				JSValueRef val(context, JS_GetProperty(context, jsvalue, tab[i].atom));
+				if (!key.is<key_type>())
+					throw type_error(quickjs::format_str("[map.k]: %s is required", type_name<key_type>().c_str()));
+				if (!val.is<val_type>())
+					throw type_error(quickjs::format_str("[map.v]: %s is required", type_name<val_type>().c_str()));
+
+				key_type kv = key.as<key_type>();
+				val_type vv = val.as<val_type>();
+				map.insert(std::make_pair<>(kv, vv));
+			}
+			return map;
+		}
+
+		template<typename Vec>
+		std::enable_if_t<type_traits::is_std_vector<Vec>::value, Vec>
+			as_impl() const {
+			using ele_type = type_traits::types::element_t<Vec>;
+			size_t len = length();
+
+			Vec vec{};
+			for (size_t i = 0; i < len; i++) {
+				JSValueRef elem(context, JS_GetPropertyUint32(context, jsvalue, i));
+				if (!elem.is<ele_type>())
+					throw type_error(quickjs::format_str("[vector]: %s is required", type_name<ele_type>().c_str()));
+				ele_type v = elem.as<ele_type>();
+				vec.push_back(std::move(v));
+			}
+			return vec;
+		}
+
+		template<typename Set>
+		std::enable_if_t<type_traits::is_std_set<Set>::value, Set>
+			as_impl() const {
+			using ele_type = type_traits::types::element_t<Set>;
+			size_t len = length();
+
+			Set set{};
+			for (size_t i = 0; i < len; i++) {
+				JSValueRef elem(context, JS_GetPropertyUint32(context, jsvalue, i));
+				if (!elem.is<ele_type>())
+					throw type_error(quickjs::format_str("[set]: %s is required", type_name<ele_type>().c_str()));
+				ele_type v = elem.as<ele_type>();
+				set.insert(std::move(v));
+			}
+			return set;
+		}
+
+		template<typename Arr>
+		std::enable_if_t<type_traits::is_std_array<Arr>::value, Arr>
+			as_impl() const {
+			using ele_type = type_traits::types::element_t<Arr>;
+			size_t len = length();
+
+			constexpr std::size_t N = type_traits::is_std_array<Arr>::size;
+			Arr array{};
+			for (size_t i = 0; i < len; i++) {
+				if (i == N)
+					break;
+				JSValueRef elem(context, JS_GetPropertyUint32(context, jsvalue, i));
+				if (!elem.is<ele_type>())
+					throw type_error(quickjs::format_str("[array]: %s is required", type_name<ele_type>().c_str()));
+				array[i] = elem.as<ele_type>();
+			}
+			return array;
+		}
+
+		template <typename Tuple, std::size_t I>
+		using tuple_element_t = typename std::tuple_element<I, Tuple>::type;
+
+		template<typename Tuple, std::size_t... Is>
+		Tuple as_tuple_impl(std::index_sequence<Is...>) const {
+			return Tuple{
+				[this]() -> tuple_element_t<Tuple, Is> {
+				using ele_type = tuple_element_t<Tuple, Is>;
+				JSValueRef elem(context,
+								JS_GetPropertyUint32(context, jsvalue, static_cast<uint32_t>(Is)));
+				if (!elem.template is<ele_type>()) {
+					throw type_error(quickjs::format_str(
+						"[tuple]: %s is required", this->template type_name<ele_type>().c_str()));
+				}
+				return elem.template as<ele_type>();
+			}()...
+			};
+		}
+
+		template<typename Tuple>
+		std::enable_if_t<type_traits::is_std_tuple<Tuple>::value, Tuple>
+			as_impl() const {
+			constexpr std::size_t N = std::tuple_size<Tuple>::value;
+			if (static_cast<std::size_t>(length()) < N) {
+				throw type_error("[tuple]: length mismatch");
+			}
+			return as_tuple_impl<Tuple>(std::make_index_sequence<N>{});
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, bool>, T>
+			as_impl() const {
+			return static_cast<T>(JS_ToBool(context, jsvalue));
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_integral_v<std::decay_t<T>>
+			&& !std::is_same_v<std::decay_t<T>, bool>, T>
+			as_impl() const {
+			int val;
+			if (JS_ToInt32(context, &val, jsvalue) == -1) {
+				throw type_error("type conversion error");
+			}
+			if (std::is_unsigned_v<T> && val < 0) {
+				throw type_error("positive integer is required");
+			}
+			return static_cast<T>(val);
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_floating_point_v<std::decay_t<T>>, T>
+			as_impl() const {
+			double val;
+			if (JS_ToFloat64(context, &val, jsvalue) == -1) {
+				throw type_error("type conversion error");
+			}
+			return static_cast<T>(val);
+		}
+
 		JSValue jsvalue = JS_UNDEFINED;
 		JSContext* context = nullptr;
 
@@ -1199,7 +1446,7 @@ namespace quickjs {
 
 	/*Note : Return quickjs::JSArgumentRef, Invoke JS_DupValue and save an additional argument index */
 	template<size_t Index>
-	static inline quickjs::JSArgumentRef dump_argument(JSContext* ctx, int argc, JSValue* argv) {
+	inline quickjs::JSArgumentRef dump_argument(JSContext* ctx, int argc, JSValue* argv) {
 		if (Index < argc) {
 			return quickjs::JSArgumentRef(ctx, JS_DupValue(ctx, argv[Index]), Index);
 		}
@@ -1432,7 +1679,7 @@ namespace quickjs {
 	 * @param ref The JSValueRef to convert.
 	 * @return The string representation, or an empty string on failure.
 	 */
-	static inline std::string to_string(const quickjs::JSValueRef& ref) {
+	inline std::string to_string(const quickjs::JSValueRef& ref) {
 		const char* cstr;
 		if (ref.is<JSType::exception>()) {
 			JSValue err = JS_GetException(ref.context);
