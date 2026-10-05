@@ -214,11 +214,14 @@ static inline void JS_FreeCStringA(JSContext* ctx, const char* str) {
 }
 
 #if defined(__cplusplus)
-#include <iostream>
 #include <array>
-#include <map>
-#include <set>
 #include <vector>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <deque>
+#include <forward_list>
 
 namespace quickjs {
 	inline std::string format_str(const char* fmt, ...) {
@@ -248,6 +251,47 @@ namespace quickjs {
 		std::string msg_;
 	};
 
+	template<typename Type>
+	class JSMemRef;
+	class JSValueRef;
+	template<typename Character>
+	class JSCStringRef;
+	class JSAtomRef;
+	class JSPropertyRef;
+	class JSArgumentRef;
+	class JSArguments;
+
+	std::string to_string(const JSValueRef& ref);
+	template<typename T>
+	quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val);
+
+	namespace JSCStringCharacter {
+		struct DefaultJSCStringCharacter {
+			const char* unwrap(JSContext* ctx, JSValue val) {
+				return JS_ToCString(ctx, val);
+			}
+			void release(JSContext* ctx, const char* str) {
+				JS_FreeCString(ctx, str);
+			}
+		};
+
+		struct DefaultJSCStringSystemCharacter {
+			const char* unwrap(JSContext* ctx, JSValue val) {
+				return JS_ToCStringA(ctx, val);
+			}
+			void release(JSContext* ctx, const char* str) {
+				JS_FreeCStringA(ctx, str);
+			}
+		};
+	}
+	using DefaultCharacter = quickjs::JSCStringCharacter::DefaultJSCStringCharacter;
+	/*convert UTF8 to the default system encoding*/
+	using SystemCharacter = quickjs::JSCStringCharacter::DefaultJSCStringSystemCharacter;
+
+	using JSCString = JSCStringRef<DefaultCharacter>;
+	/*convert UTF8 to the default system encoding*/
+	using JSCStringA = JSCStringRef<SystemCharacter>;
+
 	namespace type_traits {
 		template <typename T>
 		struct is_std_vector : std::false_type {};
@@ -270,6 +314,16 @@ namespace quickjs {
 			using allocator_type = Alloc;
 		};
 
+		template<typename K, typename V, typename H, typename E, typename A>
+		struct is_std_map<std::unordered_map<K, V, H, E, A>> : std::true_type {
+			using key_type = K;
+			using mapped_type = V;
+			using value_type = std::pair<const K, V>;
+			using hasher = H;
+			using key_equal = E;
+			using allocator_type = A;
+		};
+
 		template <typename T>
 		struct is_std_set : std::false_type {};
 
@@ -278,6 +332,42 @@ namespace quickjs {
 			using key_type = Key;
 			using value_type = Key;
 			using key_compare = Compare;
+			using allocator_type = Alloc;
+		};
+
+		template <typename Key, typename Hash, typename Eq, typename Alloc>
+		struct is_std_set<std::unordered_set<Key, Hash, Eq, Alloc>> : std::true_type {
+			using key_type = Key;
+			using value_type = Key;
+			using hasher = Hash;
+			using key_equal = Eq;
+			using allocator_type = Alloc;
+		};
+
+		template <typename T>
+		struct is_std_deque : std::false_type {};
+
+		template <typename T, typename Alloc>
+		struct is_std_deque<std::deque<T, Alloc>> : std::true_type {
+			using value_type = T;
+			using allocator_type = Alloc;
+		};
+
+		template <typename T>
+		struct is_std_list : std::false_type {};
+
+		template <typename T, typename Alloc>
+		struct is_std_list<std::list<T, Alloc>> : std::true_type {
+			using value_type = T;
+			using allocator_type = Alloc;
+		};
+
+		template <typename T>
+		struct is_std_forward_list : std::false_type {};
+
+		template <typename T, typename Alloc>
+		struct is_std_forward_list<std::forward_list<T, Alloc>> : std::true_type {
+			using value_type = T;
 			using allocator_type = Alloc;
 		};
 
@@ -297,6 +387,12 @@ namespace quickjs {
 		struct is_std_tuple<std::tuple<Args...>> : std::true_type {
 			using types = std::tuple<Args...>;
 			static constexpr std::size_t size = sizeof...(Args);
+		};
+
+		template <typename T1, typename T2>
+		struct is_std_tuple<std::pair<T1, T2>> : std::true_type {
+			using types = std::tuple<T1, T2>;
+			static constexpr std::size_t size = 2;
 		};
 
 		template <typename T>
@@ -335,6 +431,164 @@ namespace quickjs {
 			template <typename Container>
 			using allocator_t = template_type_t<Container,
 				std::tuple_size<template_types_t<Container>>::value - 1>;
+		}
+
+		namespace container {
+			template <typename T>
+			struct name {
+				static constexpr const char* value = "container";
+			};
+
+			template <typename T, typename A>
+			struct name<std::vector<T, A>> {
+				static constexpr const char* value = "vector";
+			};
+
+			template <typename T, std::size_t N>
+			struct name<std::array<T, N>> {
+				static constexpr const char* value = "array";
+			};
+
+			template <typename T, typename A>
+			struct name<std::deque<T, A>> {
+				static constexpr const char* value = "deque";
+			};
+
+			template <typename T, typename A>
+			struct name<std::list<T, A>> {
+				static constexpr const char* value = "list";
+			};
+
+			template <typename T, typename A>
+			struct name<std::forward_list<T, A>> {
+				static constexpr const char* value = "forward_list";
+			};
+
+			template <typename K, typename C, typename A>
+			struct name<std::set<K, C, A>> {
+				static constexpr const char* value = "set";
+			};
+
+			template <typename K, typename H, typename E, typename A>
+			struct name<std::unordered_set<K, H, E, A>> {
+				static constexpr const char* value = "unordered_set";
+			};
+
+			template <typename K, typename V, typename C, typename A>
+			struct name<std::map<K, V, C, A>> {
+				static constexpr const char* value = "map";
+			};
+
+			template <typename K, typename V, typename H, typename E, typename A>
+			struct name<std::unordered_map<K, V, H, E, A>> {
+				static constexpr const char* value = "unordered_map";
+			};
+
+			template <typename... Args>
+			struct name<std::tuple<Args...>> {
+				static constexpr const char* value = "tuple";
+			};
+
+			template <typename T1, typename T2>
+			struct name<std::pair<T1, T2>> {
+				static constexpr const char* value = "pair";
+			};
+		}
+
+		namespace detail {
+			template<typename T>
+			std::enable_if_t<std::is_same_v<std::decay_t<T>, bool>, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const T& val) {
+				return JSValueRef(ctx, JS_NewBool(ctx, val));
+			}
+
+			template<typename T>
+			std::enable_if_t<std::is_integral_v<std::decay_t<T>>
+				&& !std::is_same_v<std::decay_t<T>, bool>, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const T& val) {
+				return JSValueRef(ctx, JS_NewInt32(ctx, val));
+			}
+
+			template<typename T>
+			std::enable_if_t<std::is_floating_point_v<std::decay_t<T>>, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const T& val) {
+				return JSValueRef(ctx, JS_NewFloat64(ctx, val));
+			}
+
+			template<typename T>
+			std::enable_if_t<std::is_same_v<std::decay_t<T>, std::string>, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const T& val) {
+				return JSValueRef(ctx, JS_NewStringA(ctx, val.c_str()));
+			}
+
+			template<typename T>
+			std::enable_if_t<std::is_same_v<std::decay_t<T>, const char*>
+				|| std::is_same_v<std::decay_t<T>, char*>, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const T& val) {
+				return JSValueRef(ctx, JS_NewStringA(ctx, val));
+			}
+
+			template<typename T>
+			std::enable_if_t<std::is_same_v<std::decay_t<T>, quickjs::JSCString>
+				|| std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const T& val) {
+				return JSValueRef(ctx, JS_NewStringA(ctx, *val));
+			}
+
+			template<typename Map>
+			std::enable_if_t<type_traits::is_std_map<Map>::value, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const Map& val) {
+				using k_type = type_traits::types::key_t<Map>;
+				using v_type = type_traits::types::mapped_t<Map>;
+
+				JSValueRef object(ctx, JS_NewObject(ctx));
+				for (auto it = val.begin(); it != val.end(); it++) {
+					JSAtom key = JS_ValueToAtom(ctx, *quickjs::toJSValue<k_type>(ctx, it->first));
+					JSValueRef value = quickjs::toJSValue<v_type>(ctx, it->second);
+					JS_SetProperty(ctx, object.get(), key, value.release());
+				}
+				return object;
+			}
+
+			template<typename Arr>
+			std::enable_if_t<type_traits::is_std_vector<Arr>::value
+				|| type_traits::is_std_array<Arr>::value
+				|| type_traits::is_std_set<Arr>::value
+				|| type_traits::is_std_deque<Arr>::value
+				|| type_traits::is_std_list<Arr>::value
+				|| type_traits::is_std_forward_list<Arr>::value, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const Arr& val) {
+				using ele_type = type_traits::types::element_t<Arr>;
+				JSValueRef array(ctx, JS_NewArray(ctx));
+				uint32_t i = 0;
+				for (auto it = val.begin(); it != val.end(); ++it) {
+					JSValueRef value = quickjs::toJSValue<ele_type>(ctx, *it);
+					JS_SetPropertyUint32(ctx, array.get(), i++, value.release());
+				}
+				return array;
+			}
+
+			template<typename Tuple, std::size_t... I>
+			quickjs::JSValueRef tuple_impl(JSContext* ctx, const Tuple& val,
+										   std::index_sequence<I...>) {
+				JSValueRef array(ctx, JS_NewArray(ctx));
+				using expander = int[];
+				(void)expander {
+					0, (
+					 JS_SetPropertyUint32(ctx, array.get(), static_cast<uint32_t>(I),
+										  quickjs::toJSValue<std::decay_t<std::tuple_element_t<I, Tuple>>>(
+											  ctx, std::get<I>(val)).release()
+					 ), 0)...
+				};
+				return array;
+			}
+
+			template<typename Tuple>
+			std::enable_if_t<type_traits::is_std_tuple<Tuple>::value, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const Tuple& val) {
+				return tuple_impl(ctx, val,
+								  std::make_index_sequence<std::tuple_size<Tuple>::value>{});
+			}
 		}
 	}
 
@@ -428,30 +682,6 @@ namespace quickjs {
 		return quickjs::JSMemRef<T>(rt, static_cast<T*>(js_mallocz_rt(rt, sizeof(T) * size)));
 	}
 
-
-	namespace JSCStringCharacter {
-		struct DefaultJSCStringCharacter {
-			const char* unwrap(JSContext* ctx, JSValue val) {
-				return JS_ToCString(ctx, val);
-			}
-			void release(JSContext* ctx, const char* str) {
-				JS_FreeCString(ctx, str);
-			}
-		};
-
-		struct DefaultJSCStringSystemCharacter {
-			const char* unwrap(JSContext* ctx, JSValue val) {
-				return JS_ToCStringA(ctx, val);
-			}
-			void release(JSContext* ctx, const char* str) {
-				JS_FreeCStringA(ctx, str);
-			}
-		};
-	}
-	using DefaultCharacter = quickjs::JSCStringCharacter::DefaultJSCStringCharacter;
-	/*convert UTF8 to the default system encoding*/
-	using SystemCharacter = quickjs::JSCStringCharacter::DefaultJSCStringSystemCharacter;
-
 	template<typename Character = quickjs::DefaultCharacter>
 	class JSCStringRef {
 	public:
@@ -523,11 +753,6 @@ namespace quickjs {
 		Character character;
 	};
 
-	using JSCString = JSCStringRef<DefaultCharacter>;
-	/*convert UTF8 to the default system encoding*/
-	using JSCStringA = JSCStringRef<SystemCharacter>;
-
-
 	class JSAtomRef {
 	public:
 		JSAtomRef() noexcept = default;
@@ -591,11 +816,6 @@ namespace quickjs {
 		JSContext* context;
 		JSAtom jsatom;
 	};
-
-	class JSPropertyRef;
-	class JSValueRef;
-
-	std::string to_string(const JSValueRef& ref);
 
 	class JSValueRef {
 	public:
@@ -725,7 +945,10 @@ namespace quickjs {
 			} else if (type_traits::is_std_array<T>::value
 					   || type_traits::is_std_set<T>::value
 					   || type_traits::is_std_vector<T>::value
-					   || type_traits::is_std_tuple<T>::value) {
+					   || type_traits::is_std_tuple<T>::value
+					   || type_traits::is_std_deque<T>::value
+					   || type_traits::is_std_list<T>::value
+					   || type_traits::is_std_forward_list<T>::value) {
 				return is<JSType::array>();
 			} else if (type_traits::is_std_map<T>::value) {
 				if (!context)
@@ -994,7 +1217,10 @@ namespace quickjs {
 			} else if (type_traits::is_std_array<T>::value
 					   || type_traits::is_std_set<T>::value
 					   || type_traits::is_std_vector<T>::value
-					   || type_traits::is_std_tuple<T>::value) {
+					   || type_traits::is_std_tuple<T>::value
+					   || type_traits::is_std_deque<T>::value
+					   || type_traits::is_std_list<T>::value
+					   || type_traits::is_std_forward_list<T>::value) {
 				return "array";
 			} else if (type_traits::is_std_map<T>::value) {
 				return "object";
@@ -1111,21 +1337,62 @@ namespace quickjs {
 			return map;
 		}
 
-		template<typename Vec>
-		std::enable_if_t<type_traits::is_std_vector<Vec>::value, Vec>
+		template<typename Seq>
+		std::enable_if_t<type_traits::is_std_vector<Seq>::value
+			|| type_traits::is_std_deque<Seq>::value, Seq>
 			as_impl() const {
-			using ele_type = type_traits::types::element_t<Vec>;
+			using ele_type = type_traits::types::element_t<Seq>;
 			size_t len = length();
 
-			Vec vec{};
+			Seq vec{};
 			for (size_t i = 0; i < len; i++) {
 				JSValueRef elem(context, JS_GetPropertyUint32(context, jsvalue, i));
 				if (!elem.is<ele_type>())
-					throw type_error(quickjs::format_str("[vector]: %s is required", type_name<ele_type>().c_str()));
+					throw type_error(quickjs::format_str("[%s]: %s is required"
+														 , type_traits::container::name<Seq>::value
+														 , type_name<ele_type>().c_str()));
 				ele_type v = elem.as<ele_type>();
 				vec.push_back(std::move(v));
 			}
 			return vec;
+		}
+
+		template<typename List>
+		std::enable_if_t<type_traits::is_std_list<List>::value, List>
+			as_impl() const {
+			using ele_type = std::decay_t<type_traits::types::element_t<List>>;
+			size_t len = length();
+			List lst{};
+			for (size_t i = 0; i < len; i++) {
+				JSValueRef elem(context,
+								JS_GetPropertyUint32(context, jsvalue, static_cast<uint32_t>(i)));
+				if (!elem.is<ele_type>())
+					throw type_error(quickjs::format_str(
+						"[list]: %s is required", type_name<ele_type>().c_str()));
+				lst.push_back(elem.as<ele_type>());
+			}
+			return lst;
+		}
+
+		template<typename FL>
+		std::enable_if_t<type_traits::is_std_forward_list<FL>::value, FL>
+			as_impl() const {
+			using ele_type = type_traits::types::element_t<FL>;
+
+			size_t len = length();
+			FL fl{};
+
+			auto it = fl.before_begin();
+			for (size_t i = 0; i < len; i++) {
+				JSValueRef elem(context,
+								JS_GetPropertyUint32(context, jsvalue, static_cast<uint32_t>(i)));
+				if (!elem.is<ele_type>())
+					throw type_error(quickjs::format_str(
+						"[forward_list]: %s is required", type_name<ele_type>().c_str()));
+
+				it = fl.insert_after(it, elem.as<ele_type>());
+			}
+			return fl;
 		}
 
 		template<typename Set>
@@ -1138,7 +1405,9 @@ namespace quickjs {
 			for (size_t i = 0; i < len; i++) {
 				JSValueRef elem(context, JS_GetPropertyUint32(context, jsvalue, i));
 				if (!elem.is<ele_type>())
-					throw type_error(quickjs::format_str("[set]: %s is required", type_name<ele_type>().c_str()));
+					throw type_error(quickjs::format_str("[%s]: %s is required"
+														 , type_traits::container::name<Set>::value
+														 , type_name<ele_type>().c_str()));
 				ele_type v = elem.as<ele_type>();
 				set.insert(std::move(v));
 			}
@@ -1176,7 +1445,9 @@ namespace quickjs {
 								JS_GetPropertyUint32(context, jsvalue, static_cast<uint32_t>(Is)));
 				if (!elem.template is<ele_type>()) {
 					throw type_error(quickjs::format_str(
-						"[tuple]: %s is required", this->template type_name<ele_type>().c_str()));
+						"[%s]: %s is required"
+						, type_traits::container::name<Tuple>::value
+						, this->template type_name<ele_type>().c_str()));
 				}
 				return elem.template as<ele_type>();
 			}()...
@@ -1188,7 +1459,7 @@ namespace quickjs {
 			as_impl() const {
 			constexpr std::size_t N = std::tuple_size<Tuple>::value;
 			if (static_cast<std::size_t>(length()) < N) {
-				throw type_error("[tuple]: length mismatch");
+				throw type_error("[%s]: length mismatch", type_traits::container::name<Tuple>::value);
 			}
 			return as_tuple_impl<Tuple>(std::make_index_sequence<N>{});
 		}
@@ -1693,6 +1964,22 @@ namespace quickjs {
 		std::string result(cstr);
 		JS_FreeCString(ref.context, cstr);
 		return result;
+	}
+
+	/**
+	 * @brief Converts a C++ value to a QuickJS value.
+	 *
+	 * Dispatches to the matching @c new_value_impl overload via SFINAE.
+	 *
+	 * @tparam T   Input type (decayed before dispatch).
+	 * @param ctx  QuickJS context.
+	 * @param val  Value to convert (const ref, no copy).
+	 * @return Owning @c JSValueRef of the new QuickJS value.
+	 * @throws std::exception on unsupported or failed conversion.
+	 */
+	template<typename T>
+	inline quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) {
+		return type_traits::detail::new_value_impl<T>(ctx, val);
 	}
 }
 #endif //__cplusplus
