@@ -222,6 +222,7 @@ static inline void JS_FreeCStringA(JSContext* ctx, const char* str) {
 #include <unordered_set>
 #include <deque>
 #include <forward_list>
+#include <functional>
 
 namespace quickjs {
 	inline std::string format_str(const char* fmt, ...) {
@@ -396,6 +397,16 @@ namespace quickjs {
 		};
 
 		template <typename T>
+		struct is_std_function : std::false_type {};
+
+		template <typename Ret, typename... Args>
+		struct is_std_function<std::function<Ret(Args...)>> : std::true_type {
+			using return_type = Ret;
+			using arg_types = std::tuple<Args...>;
+			static constexpr std::size_t size = sizeof...(Args);
+		};
+		/* ===============================[ template_types ]=================================== */
+		template <typename T>
 		struct template_types {
 			static constexpr bool valid = false;
 		};
@@ -406,16 +417,30 @@ namespace quickjs {
 			using type = std::tuple<Args...>;
 		};
 
+		template <typename T1, typename T2>
+		struct template_types<std::pair<T1, T2>> {
+			static constexpr bool valid = true;
+			using type = std::tuple<T1, T2>;
+		};
+
 		template <typename T, std::size_t N>
 		struct template_types<std::array<T, N>> {
 			static constexpr bool valid = true;
 			using type = std::tuple<T>;
 		};
 
+		template <typename Ret, typename... Args>
+		struct template_types<std::function<Ret(Args...)>> {
+			static constexpr bool valid = true;
+			using type = std::tuple<Args...>;
+			// using type = std::tuple<Ret, Args...>;
+		};
+
 		template <typename T>
 		using template_types_t = typename quickjs::type_traits::template_types<T>::type;
 
-		template <typename T, std::size_t N>
+		template <typename T, std::size_t N,
+			typename = typename std::enable_if<template_types<T>::valid>::type>
 		using template_type_t = typename std::tuple_element<N, template_types_t<T>>::type;
 
 		namespace types {
@@ -569,7 +594,7 @@ namespace quickjs {
 			}
 
 			template<typename Tuple, std::size_t... I>
-			quickjs::JSValueRef tuple_impl(JSContext* ctx, const Tuple& val,
+			quickjs::JSValueRef new_tuple_impl(JSContext* ctx, const Tuple& val,
 										   std::index_sequence<I...>) {
 				JSValueRef array(ctx, JS_NewArray(ctx));
 				using expander = int[];
@@ -586,7 +611,7 @@ namespace quickjs {
 			template<typename Tuple>
 			std::enable_if_t<type_traits::is_std_tuple<Tuple>::value, quickjs::JSValueRef>
 				new_value_impl(JSContext* ctx, const Tuple& val) {
-				return tuple_impl(ctx, val,
+				return new_tuple_impl(ctx, val,
 								  std::make_index_sequence<std::tuple_size<Tuple>::value>{});
 			}
 		}
@@ -954,6 +979,8 @@ namespace quickjs {
 				if (!context)
 					return false;
 				return JS_IsObjectPlain(context, jsvalue);
+			} else if (type_traits::is_std_function<T>::value) {
+				return is<JSType::function>();
 			}
 			return false;
 		}
@@ -1224,6 +1251,8 @@ namespace quickjs {
 				return "array";
 			} else if (type_traits::is_std_map<T>::value) {
 				return "object";
+			} else if (type_traits::is_std_function<T>::value) {
+				return "function";
 			}
 			return "[type mismatch]";
 		}
@@ -1462,6 +1491,68 @@ namespace quickjs {
 				throw type_error("[%s]: length mismatch", type_traits::container::name<Tuple>::value);
 			}
 			return as_tuple_impl<Tuple>(std::make_index_sequence<N>{});
+		}
+
+		template <typename Fn, std::size_t... Is,
+			typename std::enable_if<!std::is_void<typename type_traits::is_std_function<Fn>::return_type>::value,
+			int>::type = 0>
+		Fn as_function_impl(std::index_sequence<Is...>) const {
+			typedef type_traits::is_std_function<Fn> traits;
+			typedef typename traits::return_type     R;
+
+			auto holder = std::make_shared<JSValueRef>(context, JS_DupValue(context, jsvalue));
+			return Fn([this, holder, context = this->context](typename std::tuple_element<Is, typename traits::arg_types>::type... args) -> R {
+				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
+						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
+					} };
+				JSValue argv[sizeof...(Is)];
+				for (std::size_t i = 0; i < sizeof...(Is); ++i)
+					argv[i] = arg_refs[i].get();
+
+				JSValueRef ret(context, JS_Call(context, holder->get(), JS_UNDEFINED, static_cast<int>(sizeof...(Is)), argv));
+				if (ret.template is<JSType::exception>()) {
+					throw std::runtime_error(quickjs::to_string(ret));
+				}
+				if (!ret.template is<R>()) {
+					throw type_error(quickjs::format_str(
+						"[function]: %s is required for return type"
+						, this->template type_name<R>().c_str()));
+				}
+				return ret.template as<R>();
+			});
+		}
+
+		template <typename Fn, std::size_t... Is,
+			typename std::enable_if<
+			std::is_void<typename type_traits::is_std_function<Fn>::return_type>::value,
+			int>::type = 0>
+		Fn as_function_impl(std::index_sequence<Is...>) const {
+			typedef type_traits::is_std_function<Fn> traits;
+
+			auto holder = std::make_shared<JSValueRef>(context, JS_DupValue(context, jsvalue));
+			return Fn([this, holder, context = this->context](typename std::tuple_element<Is, typename traits::arg_types>::type... args) -> void {
+				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
+						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
+					} };
+				JSValue argv[sizeof...(Is)];
+				for (std::size_t i = 0; i < sizeof...(Is); ++i)
+					argv[i] = arg_refs[i].get();
+
+				JSValueRef ret(context, JS_Call(context, holder->get(), JS_UNDEFINED, static_cast<int>(sizeof...(Is)), argv));
+				if (ret.template is<JSType::exception>()) {
+					throw std::runtime_error(quickjs::to_string(ret));
+				}
+			});
+		}
+
+		template<typename Fn>
+		std::enable_if_t<type_traits::is_std_function<Fn>::value, Fn>
+			as_impl() const {
+			constexpr std::size_t N = type_traits::is_std_function<Fn>::size;
+			if (static_cast<std::size_t>(length()) < N) {
+				throw type_error("[function]: argument size mismatch");
+			}
+			return as_function_impl<Fn>(std::make_index_sequence<N>{});
 		}
 
 		template<typename T>
