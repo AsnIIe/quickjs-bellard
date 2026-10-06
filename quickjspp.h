@@ -772,6 +772,10 @@ namespace quickjs {
 			strptr = cstr;
 		}
 
+		friend std::ostream& operator<<(std::ostream& os, const JSCStringRef& s) {
+			return os << s.strptr;
+		}
+
 	private:
 		const char* strptr = nullptr;
 		JSContext* context = nullptr;
@@ -985,6 +989,10 @@ namespace quickjs {
 			return false;
 		}
 
+		bool isNAN() const {
+			return JS_VALUE_IS_NAN(jsvalue);
+		}
+
 		template<JSType T>
 		bool is() const {
 			return false;
@@ -1105,9 +1113,7 @@ namespace quickjs {
 		/**
 		 * @brief Converts the current JSValue to the requested C++ type T.
 		 *
-		 * @tparam T The desired C++ type. Must be either bool, an integral type,
-		 *           or a floating-point type.
-		 *
+		 * @tparam T The desired C++ type.
 		 * @return The converted value as type T.
 		 *
 		 * @throws type_error If the current value does not match the type required
@@ -1121,10 +1127,25 @@ namespace quickjs {
 		 */
 		template<typename T>
 		T as() const {
-			if (!is<T>()) {
-				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
-			}
-			return as_impl<T>();
+			return as_impl_<T>(true, true);
+		}
+
+		/**
+		 * @brief Unchecked conversion of the current JSValue to type T.
+		 *
+		 * @tparam T The desired C++ type.
+		 * @return The converted value as T.
+		 *
+		 * @throws type_error If the underlying JS conversion fails, or if an
+		 *                    unsigned integer type is requested but the value is
+		 *                    negative.
+		 *
+		 * @note For integral types the value is converted via JS_ToInt32, so the
+		 *       range is limited to 32-bit signed integers.
+		 */
+		template<typename T>
+		T cast() const {
+			return as_impl_<T>(false, true);
 		}
 
 		template<>
@@ -1133,31 +1154,9 @@ namespace quickjs {
 		char* as<char*>() const = delete;
 
 		template<>
-		std::string as<std::string>() const {
-			if (!is<std::string>()) {
-				throw type_error("string is required");
-			}
-			const char* s = JS_ToCString(context, jsvalue);
-			std::string val(s);
-			JS_FreeCString(context, s);
-			return val;
-		}
-
+		const char* cast<const char*>() const = delete;
 		template<>
-		quickjs::JSCString as<quickjs::JSCString>() const {
-			if (!is<JSCString>()) {
-				throw type_error("string is required");
-			}
-			return quickjs::JSCString(context, jsvalue);
-		}
-
-		template<>
-		quickjs::JSCStringA as<quickjs::JSCStringA>() const {
-			if (!is<JSCStringA>()) {
-				throw type_error("string is required");
-			}
-			return quickjs::JSCStringA(context, jsvalue);
-		}
+		char* cast<char*>() const = delete;
 
 		/**
 		 * @brief Note: If the argument is passed, verify the type. Or return the default value.
@@ -1329,9 +1328,152 @@ namespace quickjs {
 		}
 
 	private:
+		/**
+		 * @brief Checks whether the current JSValue can be safely converted to type T.
+		 *
+		 * @tparam T The desired C++ type.
+		 * @param[out] msg Filled with a human-readable reason when the check fails.
+		 * @param[in]  strict If true, require is<T>() to hold; if false, follow the
+		 *                    JavaScript type-conversion rules and accept any value
+		 *                    that is convertible to T.
+		 * @return true if the value can be converted to T, false otherwise.
+		 *
+		 * @note The default implementation accepts any value; specialized overloads
+		 *       narrow this down according to the JavaScript type-conversion rules
+		 *       (e.g. Symbol cannot be converted to a number or string, objects must
+		 *       be ToPrimitive-convertible, containers require an array/object source,
+		 *       std::function requires a callable).
+		 */
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, bool>, bool>
+			cast_check(std::string& err, bool strict) const {
+			if (strict && !is<T>()) {
+				err = quickjs::format_str("%s is required", type_name<T>().c_str());
+				return false;
+			}
+			return true;
+		}
+
+		template<typename T>
+		std::enable_if_t<(std::is_integral_v<std::decay_t<T>>
+			|| std::is_floating_point_v<std::decay_t<T>>) && !std::is_same_v<std::decay_t<T>, bool>, bool>
+			cast_check(std::string& err, bool strict) const {
+			if (is<JSType::null>() || is<JSType::undefined>()) {
+				return true;
+			}
+			if (strict && !is<T>()) {
+				err = quickjs::format_str("%s is required", type_name<T>().c_str());
+				return false;
+			}
+			if (is<JSType::symbol>()) {
+				err = "cannot convert a Symbol value to a number";
+				return false;
+			}
+			if (is<JSType::object>()) {
+				double probe;
+				if (JS_ToFloat64(context, &probe, jsvalue) < 0) {
+					//clear exception
+					JSValueRef jserr(context, JS_GetException(context));
+					err = "cannot convert object to primitive value";
+					return false;
+				}
+			}
+			return true;
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, std::string>
+			|| std::is_same_v<std::decay_t<T>, quickjs::JSCString>
+			|| std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>, bool>
+			cast_check(std::string& err, bool strict) const {
+			if (strict && !is<T>()) {
+				err = quickjs::format_str("%s is required", type_name<T>().c_str());
+				return false;
+			}
+			if (is<JSType::symbol>()) {
+				err = "cannot convert a Symbol value to a string";
+				return false;
+			}
+			return true;
+		}
+
+		template<typename T>
+		std::enable_if_t<type_traits::is_std_function<T>::value, bool>
+			cast_check(std::string& err, bool strict) const {
+			if (!is<T>()) {
+				err = "function is required";
+				return false;
+			}
+			return true;
+		}
+
+		template<typename T>
+		std::enable_if_t<type_traits::is_std_array<T>::value
+			|| type_traits::is_std_set<T>::value
+			|| type_traits::is_std_vector<T>::value
+			|| type_traits::is_std_tuple<T>::value
+			|| type_traits::is_std_deque<T>::value
+			|| type_traits::is_std_list<T>::value
+			|| type_traits::is_std_forward_list<T>::value, bool>
+			cast_check(std::string& err, bool strict) const {
+			if (!is<T>()) {
+				err = "array is required";
+				return false;
+			}
+			return true;
+		}
+
+		template<typename T>
+		std::enable_if_t<type_traits::is_std_map<T>::value, bool>
+			cast_check(std::string& err, bool strict) const {
+			if (!is<T>()) {
+				err = "object is required";
+				return false;
+			}
+			return true;
+		}
+
+		/**
+		 * @brief Converts the current JSValue to the requested C++ type T.
+		 *
+		 * @tparam T The desired C++ type.
+		 * @param[in] strict If true, strictly check that the JS value matches the
+		 *                   corresponding C++ type; if false, convert per
+		 *                   JavaScript's conversion rules. Note that for
+		 *                   std::function<...>, strict only checks the declared
+		 *                   return type.
+		 * @param[in] nested If true, strictly validate nested element types of
+		 *                   wrapper types (e.g. std::map, std::vector,
+		 *                   std::tuple, std::function); if false, convert nested
+		 *                   elements per JavaScript's rules.
+		 *
+		 * @return The converted value as type T.
+		 *
+		 * @throws type_error Thrown when the value does not match the type
+		 *                    required by T according to @p strict.
+		 *
+		 * @note Using as<std::function<...>>() strictly enforces the declared
+		 *       return type, throwing on mismatch.
+		 *       Using cast<std::function<...>>() converts the return value
+		 *       according to JavaScript's conversion rules, throwing on
+		 *       mismatch.
+		 *
+		 * @note Integral types are converted via JS_ToInt32, limiting the range
+		 *       to 32-bit signed integers. Negative values are rejected when T
+		 *       is an unsigned type.
+		 */
+		template<typename T>
+		T as_impl_(bool strict, bool nested) const {
+			return as_impl<T>(strict, nested);
+		}
+
 		template<typename Map>
 		std::enable_if_t<type_traits::is_std_map<Map>::value, Map>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<Map>(err, strict))
+				throw type_error(err);
+
 			using key_type = type_traits::types::key_t<Map>;
 			using val_type = type_traits::types::mapped_t<Map>;
 
@@ -1354,13 +1496,18 @@ namespace quickjs {
 			for (int i = 0; i < len; i++) {
 				JSValueRef key(context, JS_AtomToValue(context, tab[i].atom));
 				JSValueRef val(context, JS_GetProperty(context, jsvalue, tab[i].atom));
-				if (!key.is<key_type>())
-					throw type_error(quickjs::format_str("[map.k]: %s is required", type_name<key_type>().c_str()));
-				if (!val.is<val_type>())
-					throw type_error(quickjs::format_str("[map.v]: %s is required", type_name<val_type>().c_str()));
 
-				key_type kv = key.as<key_type>();
-				val_type vv = val.as<val_type>();
+				std::string err;
+				if (!key.cast_check<key_type>(err, nested))
+					throw type_error(quickjs::format_str("[%s.k]: %s"
+														 , type_traits::container::name<Map>::value
+														 , err.c_str()));
+				if (!val.cast_check<val_type>(err, nested))
+					throw type_error(quickjs::format_str("[%s.v]: %s"
+														 , type_traits::container::name<Map>::value
+														 , err.c_str()));
+				key_type kv = key.as_impl_<key_type>(nested, nested);
+				val_type vv = val.as_impl_<val_type>(nested, nested);
 				map.insert(std::make_pair<>(kv, vv));
 			}
 			return map;
@@ -1369,18 +1516,23 @@ namespace quickjs {
 		template<typename Seq>
 		std::enable_if_t<type_traits::is_std_vector<Seq>::value
 			|| type_traits::is_std_deque<Seq>::value, Seq>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<Seq>(err, strict))
+				throw type_error(err);
+
 			using ele_type = type_traits::types::element_t<Seq>;
 			size_t len = length();
 
 			Seq vec{};
 			for (size_t i = 0; i < len; i++) {
 				JSValueRef elem(context, JS_GetPropertyUint32(context, jsvalue, i));
-				if (!elem.is<ele_type>())
-					throw type_error(quickjs::format_str("[%s]: %s is required"
+				std::string err;
+				if (!elem.cast_check<ele_type>(err, nested))
+					throw type_error(quickjs::format_str("[%s]: %s"
 														 , type_traits::container::name<Seq>::value
-														 , type_name<ele_type>().c_str()));
-				ele_type v = elem.as<ele_type>();
+														 , err.c_str()));
+				ele_type v = elem.as_impl_<ele_type>(nested, nested);
 				vec.push_back(std::move(v));
 			}
 			return vec;
@@ -1388,24 +1540,35 @@ namespace quickjs {
 
 		template<typename List>
 		std::enable_if_t<type_traits::is_std_list<List>::value, List>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<List>(err, strict))
+				throw type_error(err);
+
 			using ele_type = std::decay_t<type_traits::types::element_t<List>>;
 			size_t len = length();
 			List lst{};
 			for (size_t i = 0; i < len; i++) {
 				JSValueRef elem(context,
 								JS_GetPropertyUint32(context, jsvalue, static_cast<uint32_t>(i)));
-				if (!elem.is<ele_type>())
+				std::string err;
+				if (!elem.cast_check<ele_type>(err, nested))
 					throw type_error(quickjs::format_str(
-						"[list]: %s is required", type_name<ele_type>().c_str()));
-				lst.push_back(elem.as<ele_type>());
+						"[%s]: %s"
+						, type_traits::container::name<List>::value
+						, err.c_str()));
+				lst.push_back(elem.as_impl_<ele_type>(nested, nested));
 			}
 			return lst;
 		}
 
 		template<typename FL>
 		std::enable_if_t<type_traits::is_std_forward_list<FL>::value, FL>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<FL>(err, strict))
+				throw type_error(err);
+
 			using ele_type = type_traits::types::element_t<FL>;
 
 			size_t len = length();
@@ -1415,29 +1578,37 @@ namespace quickjs {
 			for (size_t i = 0; i < len; i++) {
 				JSValueRef elem(context,
 								JS_GetPropertyUint32(context, jsvalue, static_cast<uint32_t>(i)));
-				if (!elem.is<ele_type>())
+				std::string err;
+				if (!elem.cast_check<ele_type>(nested))
 					throw type_error(quickjs::format_str(
-						"[forward_list]: %s is required", type_name<ele_type>().c_str()));
+						"[%s]: %s"
+						, type_traits::container::name<FL>::value
+						, err.c_str()));
 
-				it = fl.insert_after(it, elem.as<ele_type>());
+				it = fl.insert_after(it, elem.as_impl_<ele_type>(nested, nested));
 			}
 			return fl;
 		}
 
 		template<typename Set>
 		std::enable_if_t<type_traits::is_std_set<Set>::value, Set>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<Set>(err, strict))
+				throw type_error(err);
+
 			using ele_type = type_traits::types::element_t<Set>;
 			size_t len = length();
 
 			Set set{};
 			for (size_t i = 0; i < len; i++) {
 				JSValueRef elem(context, JS_GetPropertyUint32(context, jsvalue, i));
-				if (!elem.is<ele_type>())
-					throw type_error(quickjs::format_str("[%s]: %s is required"
+				std::string err;
+				if (!elem.cast_check<ele_type>(err, nested))
+					throw type_error(quickjs::format_str("[%s]: %s"
 														 , type_traits::container::name<Set>::value
-														 , type_name<ele_type>().c_str()));
-				ele_type v = elem.as<ele_type>();
+														 , err.c_str()));
+				ele_type v = elem.as_impl_<ele_type>(nested, nested);
 				set.insert(std::move(v));
 			}
 			return set;
@@ -1445,7 +1616,11 @@ namespace quickjs {
 
 		template<typename Arr>
 		std::enable_if_t<type_traits::is_std_array<Arr>::value, Arr>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<Arr>(err, strict))
+				throw type_error(err);
+
 			using ele_type = type_traits::types::element_t<Arr>;
 			size_t len = length();
 
@@ -1455,9 +1630,12 @@ namespace quickjs {
 				if (i == N)
 					break;
 				JSValueRef elem(context, JS_GetPropertyUint32(context, jsvalue, i));
-				if (!elem.is<ele_type>())
-					throw type_error(quickjs::format_str("[array]: %s is required", type_name<ele_type>().c_str()));
-				array[i] = elem.as<ele_type>();
+				std::string err;
+				if (!elem.cast_check<ele_type>(err, nested))
+					throw type_error(quickjs::format_str("[%s]: %s"
+														 , type_traits::container::name<Arr>::value
+														 , err.c_str()));
+				array[i] = elem.as_impl_<ele_type>(nested, nested);
 			}
 			return array;
 		}
@@ -1466,59 +1644,63 @@ namespace quickjs {
 		using tuple_element_t = typename std::tuple_element<I, Tuple>::type;
 
 		template<typename Tuple, std::size_t... Is>
-		Tuple as_tuple_impl(std::index_sequence<Is...>) const {
+		Tuple as_tuple_impl(std::index_sequence<Is...>, bool nested) const {
 			return Tuple{
-				[this]() -> tuple_element_t<Tuple, Is> {
+				[this, nested]() -> tuple_element_t<Tuple, Is> {
 				using ele_type = tuple_element_t<Tuple, Is>;
 				JSValueRef elem(context,
 								JS_GetPropertyUint32(context, jsvalue, static_cast<uint32_t>(Is)));
-				if (!elem.template is<ele_type>()) {
+				std::string err;
+				if (!elem.template cast_check<ele_type>(err, nested)) {
 					throw type_error(quickjs::format_str(
-						"[%s]: %s is required"
+						"[%s]: %s"
 						, type_traits::container::name<Tuple>::value
-						, this->template type_name<ele_type>().c_str()));
+						, err.c_str()));
 				}
-				return elem.template as<ele_type>();
+				return elem.template as_impl_<ele_type>(nested, nested);
 			}()...
 			};
 		}
 
 		template<typename Tuple>
 		std::enable_if_t<type_traits::is_std_tuple<Tuple>::value, Tuple>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
 			constexpr std::size_t N = std::tuple_size<Tuple>::value;
+			std::string err;
+			if (!cast_check<Tuple>(err, strict))
+				throw type_error(err);
+
 			if (static_cast<std::size_t>(length()) < N) {
-				throw type_error("[%s]: length mismatch", type_traits::container::name<Tuple>::value);
+				throw type_error(quickjs::format_str("[%s]: length mismatch"
+													 , type_traits::container::name<Tuple>::value));
 			}
-			return as_tuple_impl<Tuple>(std::make_index_sequence<N>{});
+			return as_tuple_impl<Tuple>(std::make_index_sequence<N>{}, nested);
 		}
 
 		template <typename Fn, std::size_t... Is,
 			typename std::enable_if<!std::is_void<typename type_traits::is_std_function<Fn>::return_type>::value,
 			int>::type = 0>
-		Fn as_function_impl(std::index_sequence<Is...>) const {
+		Fn as_function_impl(std::index_sequence<Is...>, bool strict) const {
 			typedef type_traits::is_std_function<Fn> traits;
 			typedef typename traits::return_type     R;
 
 			auto holder = std::make_shared<JSValueRef>(context, JS_DupValue(context, jsvalue));
-			return Fn([this, holder, context = this->context](typename std::tuple_element<Is, typename traits::arg_types>::type... args) -> R {
+			return Fn([this, holder, context = this->context, strict](typename std::tuple_element<Is, typename traits::arg_types>::type... args) -> R {
 				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
 						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
 					} };
-				JSValue argv[sizeof...(Is)];
+				std::vector<JSValue> argv;
 				for (std::size_t i = 0; i < sizeof...(Is); ++i)
-					argv[i] = arg_refs[i].get();
+					argv.emplace_back(arg_refs[i].get());
 
-				JSValueRef ret(context, JS_Call(context, holder->get(), JS_UNDEFINED, static_cast<int>(sizeof...(Is)), argv));
+				JSValueRef ret(context, JS_Call(context, holder->get(), JS_UNDEFINED, static_cast<int>(sizeof...(Is)), argv.data()));
 				if (ret.template is<JSType::exception>()) {
 					throw std::runtime_error(quickjs::to_string(ret));
 				}
-				if (!ret.template is<R>()) {
-					throw type_error(quickjs::format_str(
-						"[function]: %s is required for return type"
-						, this->template type_name<R>().c_str()));
-				}
-				return ret.template as<R>();
+				std::string err;
+				if (!ret.cast_check<R>(err, strict))
+					throw quickjs::type_error(err.c_str());
+				return ret.template as_impl_<R>(strict, strict);
 			});
 		}
 
@@ -1526,7 +1708,7 @@ namespace quickjs {
 			typename std::enable_if<
 			std::is_void<typename type_traits::is_std_function<Fn>::return_type>::value,
 			int>::type = 0>
-		Fn as_function_impl(std::index_sequence<Is...>) const {
+		Fn as_function_impl(std::index_sequence<Is...>, bool strict) const {
 			typedef type_traits::is_std_function<Fn> traits;
 
 			auto holder = std::make_shared<JSValueRef>(context, JS_DupValue(context, jsvalue));
@@ -1534,11 +1716,11 @@ namespace quickjs {
 				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
 						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
 					} };
-				JSValue argv[sizeof...(Is)];
+				std::vector<JSValue> argv;
 				for (std::size_t i = 0; i < sizeof...(Is); ++i)
-					argv[i] = arg_refs[i].get();
+					argv.emplace_back(arg_refs[i].get());
 
-				JSValueRef ret(context, JS_Call(context, holder->get(), JS_UNDEFINED, static_cast<int>(sizeof...(Is)), argv));
+				JSValueRef ret(context, JS_Call(context, holder->get(), JS_UNDEFINED, static_cast<int>(sizeof...(Is)), argv.data()));
 				if (ret.template is<JSType::exception>()) {
 					throw std::runtime_error(quickjs::to_string(ret));
 				}
@@ -1547,24 +1729,31 @@ namespace quickjs {
 
 		template<typename Fn>
 		std::enable_if_t<type_traits::is_std_function<Fn>::value, Fn>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<Fn>(err, strict))
+				throw type_error(err);
+
 			constexpr std::size_t N = type_traits::is_std_function<Fn>::size;
-			if (static_cast<std::size_t>(length()) < N) {
-				throw type_error("[function]: argument size mismatch");
-			}
-			return as_function_impl<Fn>(std::make_index_sequence<N>{});
+			return as_function_impl<Fn>(std::make_index_sequence<N>{}, strict);
 		}
 
 		template<typename T>
 		std::enable_if_t<std::is_same_v<std::decay_t<T>, bool>, T>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<T>(err, strict))
+				throw type_error(err);
 			return static_cast<T>(JS_ToBool(context, jsvalue));
 		}
 
 		template<typename T>
 		std::enable_if_t<std::is_integral_v<std::decay_t<T>>
 			&& !std::is_same_v<std::decay_t<T>, bool>, T>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<T>(err, strict))
+				throw type_error(err);
 			int val;
 			if (JS_ToInt32(context, &val, jsvalue) == -1) {
 				throw type_error("type conversion error");
@@ -1577,12 +1766,47 @@ namespace quickjs {
 
 		template<typename T>
 		std::enable_if_t<std::is_floating_point_v<std::decay_t<T>>, T>
-			as_impl() const {
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<T>(err, strict))
+				throw type_error(err);
 			double val;
 			if (JS_ToFloat64(context, &val, jsvalue) == -1) {
 				throw type_error("type conversion error");
 			}
 			return static_cast<T>(val);
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, std::string>, T>
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<T>(err, strict))
+				throw type_error(err);
+			const char* s = JS_ToCString(context, jsvalue);
+			if (!s)
+				throw type_error("string is nullptr");
+			std::string str(s);
+			JS_FreeCString(context, s);
+			return s;
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, quickjs::JSCString>, T>
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<T>(err, strict))
+				throw type_error(err);
+			return quickjs::JSCString(context, jsvalue);
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>, T>
+			as_impl(bool strict, bool nested) const {
+			std::string err;
+			if (!cast_check<T>(err, strict))
+				throw type_error(err);
+			return quickjs::JSCStringA(context, jsvalue);
 		}
 
 		JSValue jsvalue = JS_UNDEFINED;
