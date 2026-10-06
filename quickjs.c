@@ -142,6 +142,7 @@ enum {
     JS_CLASS_BYTECODE_FUNCTION, /* u.func */
     JS_CLASS_BOUND_FUNCTION,    /* u.bound_function */
     JS_CLASS_C_FUNCTION_DATA,   /* u.c_function_data_record */
+    JS_CLASS_C_CLOSURE,         /* u.c_closure_record */
     JS_CLASS_GENERATOR_FUNCTION, /* u.func */
     JS_CLASS_FOR_IN_ITERATOR,   /* u.for_in_iterator */
     JS_CLASS_REGEXP,            /* u.regexp */
@@ -444,6 +445,15 @@ typedef struct JSStackFrame {
        the function is running. */
     JSValue *cur_sp;
 } JSStackFrame;
+
+/* for JSCClosure */
+typedef struct JSCClosureRecord {
+    JSCClosure *func;
+    uint16_t length;
+    uint16_t magic;
+    void *opaque;
+    void (*opaque_finalize)(void *opaque);
+} JSCClosureRecord;
 
 typedef enum {
     JS_GC_OBJ_TYPE_JS_OBJECT,
@@ -1055,6 +1065,7 @@ struct JSObject {
         void *opaque;
         struct JSBoundFunction *bound_function; /* JS_CLASS_BOUND_FUNCTION */
         struct JSCFunctionDataRecord *c_function_data_record; /* JS_CLASS_C_FUNCTION_DATA */
+        struct JSCClosureRecord *c_closure_record; /* JS_CLASS_C_CLOSURE */
         struct JSForInIterator *for_in_iterator; /* JS_CLASS_FOR_IN_ITERATOR */
         struct JSArrayBuffer *array_buffer; /* JS_CLASS_ARRAY_BUFFER, JS_CLASS_SHARED_ARRAY_BUFFER */
         struct JSTypedArray *typed_array; /* JS_CLASS_UINT8C_ARRAY..JS_CLASS_DATAVIEW */
@@ -1415,6 +1426,10 @@ static void js_c_function_data_mark(JSRuntime *rt, JSValueConst val,
 static JSValue js_c_function_data_call(JSContext *ctx, JSValueConst func_obj,
                                        JSValueConst this_val,
                                        int argc, JSValueConst *argv, int flags);
+static void js_c_closure_finalizer(JSRuntime *rt, JSValueConst val);
+static JSValue js_call_c_closure(JSContext *ctx, JSValueConst func_obj,
+                                 JSValueConst this_val,
+                                 int argc, JSValueConst *argv, int flags);
 static JSAtom js_symbol_to_atom(JSContext *ctx, JSValue val);
 static void add_gc_object(JSRuntime *rt, JSGCObjectHeader *h,
                           JSGCObjectTypeEnum type);
@@ -2023,6 +2038,7 @@ static JSClassShortDef const js_std_class_def[] = {
     { JS_ATOM_Function, js_bytecode_function_finalizer, js_bytecode_function_mark }, /* JS_CLASS_BYTECODE_FUNCTION */
     { JS_ATOM_Function, js_bound_function_finalizer, js_bound_function_mark }, /* JS_CLASS_BOUND_FUNCTION */
     { JS_ATOM_Function, js_c_function_data_finalizer, js_c_function_data_mark }, /* JS_CLASS_C_FUNCTION_DATA */
+    { JS_ATOM_Function, js_c_closure_finalizer, NULL},                           /* JS_CLASS_C_CLOSURE */
     { JS_ATOM_GeneratorFunction, js_bytecode_function_finalizer, js_bytecode_function_mark },  /* JS_CLASS_GENERATOR_FUNCTION */
     { JS_ATOM_ForInIterator, js_for_in_iterator_finalizer, js_for_in_iterator_mark },      /* JS_CLASS_FOR_IN_ITERATOR */
     { JS_ATOM_RegExp, js_regexp_finalizer, NULL },                              /* JS_CLASS_REGEXP */
@@ -2159,6 +2175,7 @@ JSRuntime *JS_NewRuntime2(const JSMallocFunctions *mf, void *opaque)
 
     rt->class_array[JS_CLASS_C_FUNCTION].call = js_call_c_function;
     rt->class_array[JS_CLASS_C_FUNCTION_DATA].call = js_c_function_data_call;
+    rt->class_array[JS_CLASS_C_CLOSURE].call = js_call_c_closure;
     rt->class_array[JS_CLASS_BOUND_FUNCTION].call = js_call_bound_function;
     rt->class_array[JS_CLASS_GENERATOR_FUNCTION].call = js_generator_function_call;
     if (init_shape_hash(rt))
@@ -7189,6 +7206,15 @@ void JS_ComputeMemoryUsage(JSRuntime *rt, JSMemoryUsage *s)
                     }
                     s->memory_used_count += 1;
                     s->memory_used_size += sizeof(*fd) + fd->data_len * sizeof(*fd->data);
+                }
+            }
+            break;
+        case JS_CLASS_C_CLOSURE:   /* u.c_closure_record */
+            {
+                JSCClosureRecord *c = p->u.c_closure_record;
+                if (c) {
+                    s->memory_used_count += 1;
+                    s->memory_used_size += sizeof(*c);
                 }
             }
             break;
@@ -61995,6 +62021,103 @@ void JS_SetRuntimeThreadLocal(JSRuntime* rt, void* local)
 void* JS_GetRuntimeThreadLocal(JSRuntime* rt)
 {
     return rt->thread_local;
+}
+
+static void js_c_closure_finalizer(JSRuntime *rt, JSValueConst val)
+{
+    JSCClosureRecord *s = JS_GetOpaque(val, JS_CLASS_C_CLOSURE);
+
+    if (s) {
+        if (s->opaque_finalize)
+            s->opaque_finalize(s->opaque);
+
+        js_free_rt(rt, s);
+    }
+}
+
+static JSValue js_call_c_closure(JSContext *ctx, JSValueConst func_obj,
+                                 JSValueConst this_val,
+                                 int argc, JSValueConst *argv, int flags)
+{
+    JSRuntime *rt = ctx->rt;
+    JSStackFrame sf_s, *sf = &sf_s, *prev_sf;
+    JSCClosureRecord *s = JS_GetOpaque(func_obj, JS_CLASS_C_CLOSURE);
+    JSValueConst *arg_buf;
+    JSValue ret;
+    int arg_count;
+    int i;
+    size_t stack_size;
+
+    arg_buf = argv;
+    arg_count = s->length;
+    if (unlikely(argc < arg_count)) {
+        stack_size = arg_count * sizeof(arg_buf[0]);
+        if (js_check_stack_overflow(rt, stack_size))
+            return JS_ThrowStackOverflow(ctx);
+        arg_buf = alloca(stack_size);
+        for (i = 0; i < argc; i++)
+            arg_buf[i] = argv[i];
+        for (i = argc; i < arg_count; i++)
+            arg_buf[i] = JS_UNDEFINED;
+    }
+
+    prev_sf = rt->current_stack_frame;
+    sf->prev_frame = prev_sf;
+    rt->current_stack_frame = sf;
+    // TODO(bnoordhuis) switch realms like js_call_c_function does
+    sf->js_mode = 0;/* unlike the quickjs-ng */
+    sf->cur_func = func_obj;
+    sf->arg_count = argc;
+    ret = s->func(ctx, this_val, argc, arg_buf, s->magic, s->opaque);
+    rt->current_stack_frame = sf->prev_frame;
+
+    return ret;
+}
+
+/* |obj| must be a JSObject of an internal class. */
+static void JS_SetOpaqueInternal(JSValueConst obj, void *opaque)
+{
+    JSObject *p;
+    assert(JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT);
+    p = JS_VALUE_GET_OBJ(obj);
+    assert(p->class_id < JS_CLASS_INIT_COUNT);
+    p->u.opaque = opaque;
+}
+
+JSValue JS_NewCClosure(JSContext *ctx, JSCClosure *func, const char *name,
+                       JSCClosureFinalizerFunc *opaque_finalize,
+                       int length, int magic, void *opaque)
+{
+    JSCClosureRecord *s;
+    JSAtom name_atom;
+    JSValue func_obj;
+
+    func_obj = JS_NewObjectProtoClass(ctx, ctx->function_proto,
+                                      JS_CLASS_C_CLOSURE);
+    if (JS_IsException(func_obj))
+        return func_obj;
+    s = js_malloc(ctx, sizeof(*s));
+    if (!s) {
+        JS_FreeValue(ctx, func_obj);
+        return JS_EXCEPTION;
+    }
+    s->func = func;
+    s->length = length;
+    s->magic = magic;
+    s->opaque = opaque;
+    s->opaque_finalize = opaque_finalize;
+    JS_SetOpaqueInternal(func_obj, s);
+    name_atom = JS_ATOM_empty_string;
+    if (name && *name) {
+        name_atom = JS_NewAtom(ctx, name);
+        if (name_atom == JS_ATOM_NULL) {
+            JS_FreeValue(ctx, func_obj);
+            return JS_EXCEPTION;
+        }
+    }
+    js_function_set_properties(ctx, func_obj, name_atom, length);
+    JS_FreeAtom(ctx, name_atom);
+    return func_obj;
 }
 
 JS_BOOL JS_IsPromise(JSContext* ctx, JSValue val) {

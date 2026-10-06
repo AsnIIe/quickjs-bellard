@@ -376,6 +376,7 @@ static inline JSValue __JS_NewShortBigInt(JSContext *ctx, int64_t d)
 typedef JSValue JSCFunction(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv);
 typedef JSValue JSCFunctionMagic(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic);
 typedef JSValue JSCFunctionData(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, JSValue *func_data);
+typedef JSValue JSCClosure(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic, void *opaque);
 
 typedef struct JSMallocState {
     size_t malloc_count;
@@ -1415,6 +1416,12 @@ void* JS_GetRuntimeThreadLocal(JSRuntime* rt);
 JS_BOOL JS_IsArrayBuffer(JSContext* ctx, JSValueConst val);
 
 /* The following function is from : https://github.com/quickjs-ng/quickjs.git */
+typedef void JSCClosureFinalizerFunc(void*);
+JSValue JS_NewCClosure(JSContext* ctx, JSCClosure* func,
+                       const char* name,
+                       JSCClosureFinalizerFunc* opaque_finalize,
+                       int length, int magic, void* opaque);
+
 JS_BOOL JS_IsPromise(JSContext* ctx, JSValue val);
 void JS_PromiseMarkAsHandled(JSContext* ctx, JSValueConst promise);
 JSValue JS_NewSettledPromise(JSContext* ctx, JS_BOOL is_reject, JSValueConst value);

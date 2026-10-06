@@ -241,6 +241,7 @@ js_std_jobs_exception
 js_std_post_asyncpoll
 js_std_send_asyncpoll
 js_std_remove_asyncpoll
+JS_NewCClosure
 JS_IsPromise
 JS_PromiseMarkAsHandled
 JS_NewSettledPromise
