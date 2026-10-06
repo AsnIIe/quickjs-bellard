@@ -216,6 +216,10 @@ rqsort
 strstart
 unicode_from_utf8
 unicode_to_utf8
+JS_NewSymbol
+JS_NewBigInt128
+JS_ToBigInt128
+JS_ToBigInt128Sat
 
 ;The following is the extension function, add by zenx
 JS_IsDate
