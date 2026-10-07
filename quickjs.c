@@ -62249,3 +62249,14 @@ JS_BOOL JS_IsArrayBuffer(JSContext * ctx, JSValueConst val) {
     JSClassID classId = JS_GetClassID(val);
     return JS_CLASS_ARRAY_BUFFER == classId || JS_CLASS_SHARED_ARRAY_BUFFER == classId;
 }
+
+JS_BOOL JS_IsCFunction2(JSContext* ctx, JSValueConst val) {
+    JSObject *p;
+    if (JS_VALUE_GET_TAG(val) != JS_TAG_OBJECT)
+        return FALSE;
+    p = JS_VALUE_GET_OBJ(val);
+    if (p->class_id == JS_CLASS_C_FUNCTION)
+        return TRUE;
+    else
+        return (ctx->rt->class_array[p->class_id].call != NULL);
+}

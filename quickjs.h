@@ -801,6 +801,7 @@ JSValue JS_NewObjectProto(JSContext *ctx, JSValueConst proto);
 JSValue JS_NewObject(JSContext *ctx);
 
 JS_BOOL JS_IsFunction(JSContext* ctx, JSValueConst val);
+JS_BOOL JS_IsCFunction(JSContext* ctx, JSValueConst val, JSCFunction* func, int magic);
 JS_BOOL JS_IsConstructor(JSContext* ctx, JSValueConst val);
 JS_BOOL JS_SetConstructorBit(JSContext *ctx, JSValueConst func_obj, JS_BOOL val);
 
@@ -1414,6 +1415,7 @@ void JS_SetRuntimeThreadLocal(JSRuntime* rt, void* local);
 void* JS_GetRuntimeThreadLocal(JSRuntime* rt);
 
 JS_BOOL JS_IsArrayBuffer(JSContext* ctx, JSValueConst val);
+JS_BOOL JS_IsCFunction2(JSContext* ctx, JSValueConst val);
 
 /* The following function is from : https://github.com/quickjs-ng/quickjs.git */
 typedef void JSCClosureFinalizerFunc(void*);

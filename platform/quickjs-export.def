@@ -48,6 +48,7 @@ JS_GetArrayBuffer
 JS_GetClassID
 JS_GetClassProto
 JS_GetContextOpaque
+JS_IsCFunction
 JS_GetException
 JS_GetGlobalObject
 JS_GetImportMeta
@@ -256,4 +257,5 @@ JS_IsAsyncFunction
 JS_IsArrayBuffer
 js_std_has_rejected_promise
 js_std_rejected_promise_reason
+JS_IsCFunction2
 
