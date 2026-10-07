@@ -1149,7 +1149,8 @@ namespace quickjs {
 		}
 
 		/**
-		 * @brief Unchecked conversion of the current JSValue to type T.
+		 * @brief Fully unchecked conversion following JavaScript's conversion
+		 *        rules, including nested element types.
 		 *
 		 * @tparam T The desired C++ type.
 		 * @return The converted value as T.
@@ -1165,6 +1166,30 @@ namespace quickjs {
 		std::enable_if_t<!std::is_same_v<std::decay_t<T>, const char*>
 			&& !std::is_same_v<std::decay_t<T>, char*>, T>
 			cast() const {
+			return as_impl_<T>(false, false);
+		}
+
+		/**
+		 * @brief Converts the current JSValue to T per JavaScript's rules,
+		 *        with strict checking of nested element types.
+		 *
+		 * @tparam T The desired C++ type.
+		 * @return The converted value as T.
+		 *
+		 * @throws type_error If the underlying JS conversion fails, or if an
+		 *                    unsigned integer type is requested but the value is
+		 *                    negative.
+		 *
+		 * | Call      | strict | nested | Semantics                        |
+		 * |-----------|--------|--------|----------------------------------|
+		 * | as<T>()   | true   | true   | Strict value + strict nesting    |
+		 * | cast<T>() | false  | false  | Lenient value + lenient nesting  |
+		 * | to<T>()   | false  | true   | Lenient value + strict nesting   |
+		 */
+		template<typename T>
+		std::enable_if_t<!std::is_same_v<std::decay_t<T>, const char*>
+			&& !std::is_same_v<std::decay_t<T>, char*>, T>
+			to() const {
 			return as_impl_<T>(false, true);
 		}
 
@@ -1681,6 +1706,25 @@ namespace quickjs {
 			return as_tuple_impl<Tuple>(std::make_index_sequence<N>{}, nested);
 		}
 
+
+		template<typename ArgTypes, std::size_t N>
+		typename std::enable_if_t<std::tuple_size<ArgTypes>::value != 0, JSValueRef>
+			as_function_impl_thisArg(const std::array<JSValueRef, N>& arg_refs) {
+			using Arg0 = std::tuple_element<0, typename ArgTypes>::type;
+			if (std::is_same_v<std::decay_t<Arg0>, JSValueRef>
+				|| std::is_base_of_v<JSValueRef, std::decay_t<Arg0>>
+				|| std::is_same_v<std::decay_t<Arg0>, JSValue>) {
+				return JSValueRef(context, JS_DupValue(context, arg_refs[0].get()));
+			}
+			return JSValueRef(context, JS_UNDEFINED);
+		}
+
+		template<typename ArgTypes, std::size_t N>
+		typename std::enable_if_t<std::tuple_size<ArgTypes>::value == 0, JSValueRef>
+			as_function_impl_thisArg(const std::array<JSValueRef, N>& arg_refs) {
+			return JSValueRef(context, JS_UNDEFINED);
+		}
+
 		template <typename Fn, std::size_t... Is,
 			typename std::enable_if<!std::is_void<typename type_traits::is_std_function<Fn>::return_type>::value,
 			int>::type = 0>
@@ -1693,15 +1737,8 @@ namespace quickjs {
 				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
 						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
 					} };
-				JSValueRef thisArg;
-				std::size_t idx = 0;
-				using Arg0 = std::tuple_element<0, typename traits::arg_types>::type;
-				if (std::is_same_v<std::decay_t<Arg0>, JSValueRef>
-					|| std::is_base_of_v<JSValueRef, std::decay_t<Arg0>>
-					|| std::is_same_v<std::decay_t<Arg0>, JSValue>) {
-					thisArg = JSValueRef(context, JS_DupValue(context, arg_refs[0].get()));
-					idx++;
-				}
+				JSValueRef thisArg = as_function_impl_thisArg<typename traits::arg_types, sizeof...(Is)>(arg_refs);
+				std::size_t idx = thisArg.is<JSType::undefined>() ? 0 : 1;
 				std::vector<JSValue> argv;
 				for (; idx < sizeof...(Is); ++idx)
 					argv.emplace_back(arg_refs[idx].get());
@@ -1729,15 +1766,8 @@ namespace quickjs {
 				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
 						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
 					} };
-				JSValueRef thisArg;
-				std::size_t idx = 0;
-				using Arg0 = std::tuple_element<0, typename traits::arg_types>::type;
-				if (std::is_same_v<std::decay_t<Arg0>, JSValueRef>
-					|| std::is_base_of_v<JSValueRef, std::decay_t<Arg0>>
-					|| std::is_same_v<std::decay_t<Arg0>, JSValue>) {
-					thisArg = JSValueRef(context, JS_DupValue(context, arg_refs[0].get()));
-					idx++;
-				}
+				JSValueRef thisArg = as_function_impl_thisArg<typename traits::arg_types, sizeof...(Is)>(arg_refs);
+				std::size_t idx = thisArg.is<JSType::undefined>() ? 0 : 1;
 				std::vector<JSValue> argv;
 				for (; idx < sizeof...(Is); ++idx)
 					argv.emplace_back(arg_refs[idx].get());
