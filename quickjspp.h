@@ -522,6 +522,19 @@ namespace quickjs {
 
 		namespace detail {
 			template<typename T>
+			std::enable_if_t<std::is_same_v<std::decay_t<T>, JSValueRef>
+				|| std::is_base_of_v<JSValueRef, std::decay_t<T>>, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const T& val) {
+				return JSValueRef(ctx, JS_DupValue(ctx, val.get()));
+			}
+
+			template<typename T>
+			std::enable_if_t<std::is_same_v<std::decay_t<T>, JSValue>, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const T& val) {
+				return JSValueRef(ctx, JS_DupValue(ctx, val));
+			}
+
+			template<typename T>
 			std::enable_if_t<std::is_same_v<std::decay_t<T>, bool>, quickjs::JSValueRef>
 				new_value_impl(JSContext* ctx, const T& val) {
 				return JSValueRef(ctx, JS_NewBool(ctx, val));
@@ -529,6 +542,7 @@ namespace quickjs {
 
 			template<typename T>
 			std::enable_if_t<std::is_integral_v<std::decay_t<T>>
+				&& !std::is_same_v<std::decay_t<T>, JSValue>
 				&& !std::is_same_v<std::decay_t<T>, bool>, quickjs::JSValueRef>
 				new_value_impl(JSContext* ctx, const T& val) {
 				return JSValueRef(ctx, JS_NewInt32(ctx, val));
@@ -1670,27 +1684,36 @@ namespace quickjs {
 		template <typename Fn, std::size_t... Is,
 			typename std::enable_if<!std::is_void<typename type_traits::is_std_function<Fn>::return_type>::value,
 			int>::type = 0>
-		Fn as_function_impl(std::index_sequence<Is...>, bool strict) const {
+		Fn as_function_impl(std::index_sequence<Is...>, bool strict, bool nested) const {
 			typedef type_traits::is_std_function<Fn> traits;
 			typedef typename traits::return_type     R;
 
 			auto holder = std::make_shared<JSValueRef>(context, JS_DupValue(context, jsvalue));
-			return Fn([this, holder, context = this->context, strict](typename std::tuple_element<Is, typename traits::arg_types>::type... args) -> R {
+			return Fn([this, holder, context = this->context, strict, nested](typename std::tuple_element<Is, typename traits::arg_types>::type... args) -> R {
 				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
 						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
 					} };
+				JSValueRef thisArg;
+				std::size_t idx = 0;
+				using Arg0 = std::tuple_element<0, typename traits::arg_types>::type;
+				if (std::is_same_v<std::decay_t<Arg0>, JSValueRef>
+					|| std::is_base_of_v<JSValueRef, std::decay_t<Arg0>>
+					|| std::is_same_v<std::decay_t<Arg0>, JSValue>) {
+					thisArg = JSValueRef(context, JS_DupValue(context, arg_refs[0].get()));
+					idx++;
+				}
 				std::vector<JSValue> argv;
-				for (std::size_t i = 0; i < sizeof...(Is); ++i)
-					argv.emplace_back(arg_refs[i].get());
+				for (; idx < sizeof...(Is); ++idx)
+					argv.emplace_back(arg_refs[idx].get());
 
-				JSValueRef ret(context, JS_Call(context, holder->get(), JS_UNDEFINED, static_cast<int>(sizeof...(Is)), argv.data()));
+				JSValueRef ret(context, JS_Call(context, holder->get(), thisArg.get(), argv.size(), argv.data()));
 				if (ret.template is<JSType::exception>()) {
 					throw std::runtime_error(quickjs::to_string(ret));
 				}
 				std::string err;
 				if (!ret.cast_check<R>(err, strict))
 					throw quickjs::type_error(err.c_str());
-				return ret.template as_impl_<R>(strict, strict);
+				return ret.template as_impl_<R>(strict, nested);
 			});
 		}
 
@@ -1698,7 +1721,7 @@ namespace quickjs {
 			typename std::enable_if<
 			std::is_void<typename type_traits::is_std_function<Fn>::return_type>::value,
 			int>::type = 0>
-		Fn as_function_impl(std::index_sequence<Is...>, bool strict) const {
+		Fn as_function_impl(std::index_sequence<Is...>, bool strict, bool nested) const {
 			typedef type_traits::is_std_function<Fn> traits;
 
 			auto holder = std::make_shared<JSValueRef>(context, JS_DupValue(context, jsvalue));
@@ -1706,11 +1729,20 @@ namespace quickjs {
 				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
 						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
 					} };
+				JSValueRef thisArg;
+				std::size_t idx = 0;
+				using Arg0 = std::tuple_element<0, typename traits::arg_types>::type;
+				if (std::is_same_v<std::decay_t<Arg0>, JSValueRef>
+					|| std::is_base_of_v<JSValueRef, std::decay_t<Arg0>>
+					|| std::is_same_v<std::decay_t<Arg0>, JSValue>) {
+					thisArg = JSValueRef(context, JS_DupValue(context, arg_refs[0].get()));
+					idx++;
+				}
 				std::vector<JSValue> argv;
-				for (std::size_t i = 0; i < sizeof...(Is); ++i)
-					argv.emplace_back(arg_refs[i].get());
+				for (; idx < sizeof...(Is); ++idx)
+					argv.emplace_back(arg_refs[idx].get());
 
-				JSValueRef ret(context, JS_Call(context, holder->get(), JS_UNDEFINED, static_cast<int>(sizeof...(Is)), argv.data()));
+				JSValueRef ret(context, JS_Call(context, holder->get(), thisArg.get(), argv.size(), argv.data()));
 				if (ret.template is<JSType::exception>()) {
 					throw std::runtime_error(quickjs::to_string(ret));
 				}
@@ -1725,7 +1757,7 @@ namespace quickjs {
 				throw type_error(err);
 
 			constexpr std::size_t N = type_traits::is_std_function<Fn>::size;
-			return as_function_impl<Fn>(std::make_index_sequence<N>{}, strict);
+			return as_function_impl<Fn>(std::make_index_sequence<N>{}, strict, nested);
 		}
 
 		template<typename T>
