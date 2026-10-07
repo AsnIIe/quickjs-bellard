@@ -258,4 +258,13 @@ JS_IsArrayBuffer
 js_std_has_rejected_promise
 js_std_rejected_promise_reason
 JS_IsCFunction2
+JS_IsTypedArray
+JS_IsRegExp
+JS_IsMap
+JS_IsSet
+JS_IsWeakRef
+JS_IsWeakSet
+JS_IsWeakMap
+JS_IsDataView
+JS_GetTypedArrayType
 

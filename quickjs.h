@@ -1414,8 +1414,16 @@ void JS_SetRuntimeThreadLocal(JSRuntime* rt, void* local);
 /* only exported for quickjs-libc */
 void* JS_GetRuntimeThreadLocal(JSRuntime* rt);
 
-JS_BOOL JS_IsArrayBuffer(JSContext* ctx, JSValueConst val);
+JS_BOOL JS_IsArrayBuffer(JSValueConst val);
 JS_BOOL JS_IsCFunction2(JSContext* ctx, JSValueConst val);
+JS_BOOL JS_IsTypedArray(JSValueConst val);
+JS_BOOL JS_IsRegExp(JSValueConst val);
+JS_BOOL JS_IsMap(JSValueConst val);
+JS_BOOL JS_IsSet(JSValueConst val);
+JS_BOOL JS_IsWeakRef(JSValueConst val);
+JS_BOOL JS_IsWeakSet(JSValueConst val);
+JS_BOOL JS_IsWeakMap(JSValueConst val);
+JS_BOOL JS_IsDataView(JSValueConst val);
 
 /* The following function is from : https://github.com/quickjs-ng/quickjs.git */
 typedef void JSCClosureFinalizerFunc(void*);
@@ -1424,7 +1432,7 @@ JSValue JS_NewCClosure(JSContext* ctx, JSCClosure* func,
                        JSCClosureFinalizerFunc* opaque_finalize,
                        int length, int magic, void* opaque);
 
-JS_BOOL JS_IsPromise(JSContext* ctx, JSValue val);
+JS_BOOL JS_IsPromise(JSValue val);
 void JS_PromiseMarkAsHandled(JSContext* ctx, JSValueConst promise);
 JSValue JS_NewSettledPromise(JSContext* ctx, JS_BOOL is_reject, JSValueConst value);
 
@@ -1461,7 +1469,9 @@ JSValue JS_NewProxy(JSContext* ctx, JSValueConst target,
 typedef void JSRuntimeFinalizer(JSRuntime*, void*);
 int JS_AddRuntimeFinalizer(JSRuntime* rt,
                            JSRuntimeFinalizer* finalizer, void* arg);
-JS_BOOL JS_IsAsyncFunction(JSContext* ctx, JSValueConst val);
+JS_BOOL JS_IsAsyncFunction(JSValueConst val);
+/* returns -1 if not a typed array otherwise return a JSTypedArrayEnum value */
+int JS_GetTypedArrayType(JSValueConst obj);
 
 #undef js_unlikely
 #undef js_force_inline

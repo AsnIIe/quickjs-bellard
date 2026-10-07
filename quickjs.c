@@ -62120,7 +62120,7 @@ JSValue JS_NewCClosure(JSContext *ctx, JSCClosure *func, const char *name,
     return func_obj;
 }
 
-JS_BOOL JS_IsPromise(JSContext* ctx, JSValue val) {
+JS_BOOL JS_IsPromise(JSValue val) {
     if (JS_VALUE_GET_TAG(val) != JS_TAG_OBJECT)
         return FALSE;
     return JS_VALUE_GET_OBJ(val)->class_id == JS_CLASS_PROMISE;
@@ -62241,11 +62241,19 @@ int JS_AddRuntimeFinalizer(JSRuntime* rt, JSRuntimeFinalizer* finalizer,
     return 0;
 }
 
-JS_BOOL JS_IsAsyncFunction(JSContext* ctx, JSValueConst val) {
+JS_BOOL JS_IsAsyncFunction(JSValueConst val) {
     return JS_CLASS_ASYNC_FUNCTION == JS_GetClassID(val);
 }
 
-JS_BOOL JS_IsArrayBuffer(JSContext * ctx, JSValueConst val) {
+int JS_GetTypedArrayType(JSValueConst obj) {
+    JSClassID class_id = JS_GetClassID(obj);
+    if (class_id >= JS_CLASS_UINT8C_ARRAY && class_id <= JS_CLASS_FLOAT64_ARRAY)
+        return class_id - JS_CLASS_UINT8C_ARRAY;
+    else
+        return -1;
+}
+
+JS_BOOL JS_IsArrayBuffer(JSValueConst val) {
     JSClassID classId = JS_GetClassID(val);
     return JS_CLASS_ARRAY_BUFFER == classId || JS_CLASS_SHARED_ARRAY_BUFFER == classId;
 }
@@ -62259,4 +62267,44 @@ JS_BOOL JS_IsCFunction2(JSContext* ctx, JSValueConst val) {
         return TRUE;
     else
         return (ctx->rt->class_array[p->class_id].call != NULL);
+}
+
+JS_BOOL JS_IsTypedArray(JSValueConst val) {
+    JSObject *p;
+    if (JS_VALUE_GET_TAG(val) != JS_TAG_OBJECT)
+        return FALSE;
+    p = JS_VALUE_GET_OBJ(val);
+    if (!(p->class_id >= JS_CLASS_UINT8C_ARRAY &&
+          p->class_id <= JS_CLASS_FLOAT64_ARRAY)) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+JS_BOOL JS_IsRegExp(JSValueConst val) {
+    return JS_CLASS_REGEXP == JS_GetClassID(val);
+}
+
+JS_BOOL JS_IsMap(JSValueConst val) {
+    return JS_CLASS_MAP == JS_GetClassID(val);
+}
+
+JS_BOOL JS_IsSet(JSValueConst val) {
+    return JS_CLASS_SET == JS_GetClassID(val);
+}
+
+JS_BOOL JS_IsWeakRef(JSValueConst val) {
+    return JS_CLASS_WEAK_REF == JS_GetClassID(val);
+}
+
+JS_BOOL JS_IsWeakSet(JSValueConst val) {
+    return JS_CLASS_WEAKSET == JS_GetClassID(val);
+}
+
+JS_BOOL JS_IsWeakMap(JSValueConst val) {
+    return JS_CLASS_WEAKMAP == JS_GetClassID(val);
+}
+
+JS_BOOL JS_IsDataView(JSValueConst val) {
+    return JS_CLASS_DATAVIEW == JS_GetClassID(val);
 }
