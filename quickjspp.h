@@ -698,12 +698,14 @@ namespace quickjs {
 		JSRuntime* runtime = nullptr;
 	};
 
-	template<typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
-	inline quickjs::JSMemRef<T> make_unique(JSContext* ctx, size_t size = 1) {
+	template<typename T>
+	inline std::enable_if_t<!std::is_void_v<T>, quickjs::JSMemRef<T>>
+		make_unique(JSContext* ctx, size_t size = 1) {
 		return quickjs::JSMemRef<T>(ctx, static_cast<T*>(js_mallocz(ctx, sizeof(T) * size)));
 	}
-	template<typename T, typename = std::enable_if_t<!std::is_void_v<T>>>
-	inline quickjs::JSMemRef<T> make_unique(JSRuntime* rt, size_t size = 1) {
+	template<typename T>
+	inline std::enable_if_t<!std::is_void_v<T>, quickjs::JSMemRef<T>>
+		make_unique(JSRuntime* rt, size_t size = 1) {
 		return quickjs::JSMemRef<T>(rt, static_cast<T*>(js_mallocz_rt(rt, sizeof(T) * size)));
 	}
 
@@ -939,7 +941,7 @@ namespace quickjs {
 		//Note: If is array, without verify length
 		quickjs::JSPropertyRef operator[](int idx) const;
 
-		//Note: If is array, get property .length
+		//Note: If is string/array/function, get property .length
 		size_t length() const {
 			if (!is<JSType::string>() && !is<JSType::array>() && !is<JSType::function>()) {
 				throw type_error(quickjs::format_str("cannot read property 'length' of %s", type_name(type()).c_str()));
@@ -1126,7 +1128,9 @@ namespace quickjs {
 		 *       rejected when T is an unsigned type.
 		 */
 		template<typename T>
-		T as() const {
+		std::enable_if_t<!std::is_same_v<std::decay_t<T>, const char*>
+			&& !std::is_same_v<std::decay_t<T>, char*>, T>
+			as() const {
 			return as_impl_<T>(true, true);
 		}
 
@@ -1144,19 +1148,11 @@ namespace quickjs {
 		 *       range is limited to 32-bit signed integers.
 		 */
 		template<typename T>
-		T cast() const {
+		std::enable_if_t<!std::is_same_v<std::decay_t<T>, const char*>
+			&& !std::is_same_v<std::decay_t<T>, char*>, T>
+			cast() const {
 			return as_impl_<T>(false, true);
 		}
-
-		template<>
-		const char* as<const char*>() const = delete;
-		template<>
-		char* as<char*>() const = delete;
-
-		template<>
-		const char* cast<const char*>() const = delete;
-		template<>
-		char* cast<char*>() const = delete;
 
 		/**
 		 * @brief Note: If the argument is passed, verify the type. Or return the default value.
@@ -1165,7 +1161,9 @@ namespace quickjs {
 		 * @param throw_err    If true, throws quickjs::type_error on type mismatch; if false, returns default_val.
 		 */
 		template<typename T>
-		T as(T default_val, bool throw_err = true) const {
+		std::enable_if_t<!std::is_same_v<std::decay_t<T>, const char*>
+			&& !std::is_same_v<std::decay_t<T>, char*>, T>
+			as(T default_val, bool throw_err = true) const {
 			if (!context) {
 				return default_val;
 			} else if (!is<T>()) {
@@ -1176,11 +1174,6 @@ namespace quickjs {
 			}
 			return as<T>();
 		}
-
-		template<>
-		const char* as<const char*>(const char* default_val, bool throw_err) const = delete;
-		template<>
-		char* as<char*>(char* default_val, bool throw_err) const = delete;
 
 		template<typename T>
 		T stringify() const = delete;
@@ -1358,15 +1351,12 @@ namespace quickjs {
 		std::enable_if_t<(std::is_integral_v<std::decay_t<T>>
 			|| std::is_floating_point_v<std::decay_t<T>>) && !std::is_same_v<std::decay_t<T>, bool>, bool>
 			cast_check(std::string& err, bool strict) const {
-			if (is<JSType::null>() || is<JSType::undefined>()) {
-				return true;
+			if (is<JSType::symbol>()) {
+				err = "cannot convert a Symbol value to a number";
+				return false;
 			}
 			if (strict && !is<T>()) {
 				err = quickjs::format_str("%s is required", type_name<T>().c_str());
-				return false;
-			}
-			if (is<JSType::symbol>()) {
-				err = "cannot convert a Symbol value to a number";
 				return false;
 			}
 			if (is<JSType::object>()) {
@@ -1386,12 +1376,12 @@ namespace quickjs {
 			|| std::is_same_v<std::decay_t<T>, quickjs::JSCString>
 			|| std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>, bool>
 			cast_check(std::string& err, bool strict) const {
-			if (strict && !is<T>()) {
-				err = quickjs::format_str("%s is required", type_name<T>().c_str());
-				return false;
-			}
 			if (is<JSType::symbol>()) {
 				err = "cannot convert a Symbol value to a string";
+				return false;
+			}
+			if (strict && !is<T>()) {
+				err = quickjs::format_str("%s is required", type_name<T>().c_str());
 				return false;
 			}
 			return true;
@@ -2099,8 +2089,9 @@ namespace quickjs {
 		 *                       Compilation will fail if any other type is passed.
 		 * @param require_tags   A parameter pack of JSType values representing the expected argument types.
 		 */
-		template<size_t GroupId, typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
-		void registerGroup(TagTypes... require_tags) noexcept {
+		template<size_t GroupId, typename... TagTypes>
+		std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value, void>
+			registerGroup(TagTypes... require_tags) noexcept {
 			isGroupRegisted = true;
 			constexpr size_t require_size = sizeof...(TagTypes);
 			if (argc_ != require_size) {
@@ -2159,8 +2150,9 @@ namespace quickjs {
 		 * @param require_types A pack of JSType values representing the expected types.
 		 * @return true if the argument count matches exactly AND all types are correct; false otherwise.
 		 */
-		template<typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
-		bool IsArgsOf(TagTypes... require_types) noexcept {
+		template<typename... TagTypes>
+		std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value, bool>
+			IsArgsOf(TagTypes... require_types) noexcept {
 			constexpr size_t require_size = sizeof...(TagTypes);
 			if (size() != static_cast<int>(require_size)) {
 				return false;
@@ -2184,8 +2176,9 @@ namespace quickjs {
 		 * @param require_types A pack of JSType values representing the expected types.
 		 * @return true if the remaining arguments from s_idx exactly match the required types and count.
 		 */
-		template<typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
-		bool IsArgsOf(size_t s_idx, TagTypes... require_types) noexcept {
+		template<typename... TagTypes>
+		std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value, bool>
+			IsArgsOf(size_t s_idx, TagTypes... require_types) noexcept {
 			constexpr size_t require_size = sizeof...(TagTypes);
 			if (size() - s_idx != static_cast<int>(require_size)) {
 				return false;
@@ -2209,8 +2202,9 @@ namespace quickjs {
 		 * @param require_types A pack of JSType values representing the minimum expected types.
 		 * @return true if the argument count is greater than or equal to required, and the first N types match.
 		 */
-		template<typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
-		bool ExpectArgsOf(TagTypes... require_types) noexcept {
+		template<typename... TagTypes>
+		std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value, bool>
+			ExpectArgsOf(TagTypes... require_types) noexcept {
 			constexpr size_t require_size = sizeof...(TagTypes);
 			if (size() < static_cast<int>(require_size)) {
 				return false;
@@ -2235,8 +2229,9 @@ namespace quickjs {
 		 * @param require_types A pack of JSType values representing the minimum expected types from s_idx onwards.
 		 * @return true if the remaining arguments from s_idx are enough and their types match.
 		 */
-		template<typename... TagTypes, typename = std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value>>
-		bool ExpectArgsOf(size_t s_idx, TagTypes... require_types) noexcept {
+		template<typename... TagTypes>
+		std::enable_if_t<std::conjunction<std::is_same<TagTypes, JSType>...>::value, bool>
+			ExpectArgsOf(size_t s_idx, TagTypes... require_types) noexcept {
 			constexpr size_t require_size = sizeof...(TagTypes);
 			if (size() - s_idx < static_cast<int>(require_size)) {
 				return false;
