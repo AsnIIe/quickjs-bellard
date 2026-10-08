@@ -433,7 +433,6 @@ namespace quickjs {
 		struct template_types<std::function<Ret(Args...)>> {
 			static constexpr bool valid = true;
 			using type = std::tuple<Args...>;
-			// using type = std::tuple<Ret, Args...>;
 		};
 
 		template <typename T>
@@ -442,6 +441,51 @@ namespace quickjs {
 		template <typename T, std::size_t N,
 			typename = typename std::enable_if<template_types<T>::valid>::type>
 		using template_type_t = typename std::tuple_element<N, template_types_t<T>>::type;
+
+		namespace function {
+			// Forward declaration
+			template <typename F, typename = void>
+			struct function_traits {};
+
+			// 1) Function pointer
+			template <typename Ret, typename... Args>
+			struct function_traits<Ret(*)(Args...), void> {
+				using signature = Ret(Args...);
+			};
+
+			// 2) Pointer to member function (const)
+			template <typename C, typename Ret, typename... Args>
+			struct function_traits<Ret(C::*)(Args...) const, void> {
+				using signature = Ret(Args...);
+			};
+
+			// 3) Pointer to member function (non-const)
+			template <typename C, typename Ret, typename... Args>
+			struct function_traits<Ret(C::*)(Args...), void> {
+				using signature = Ret(Args...);
+			};
+
+			// 4) Functor / lambda: matches only when F has an operator()
+			template <typename F>
+			struct function_traits<F, std::void_t<decltype(&F::operator())>>
+				: function_traits<decltype(&F::operator())> {};
+
+			// 5) std::function
+			template <typename Ret, typename... Args>
+			struct function_traits<std::function<Ret(Args...)>, void> {
+				using signature = Ret(Args...);
+			};
+
+			template <typename F, typename = void>
+			struct has_signature : std::false_type {};
+
+			template <typename F>
+			struct has_signature<F, std::void_t<typename function_traits<std::decay_t<F>>::signature>>
+				: std::true_type {};
+
+			template <typename F>
+			using function_t = std::function<typename function_traits<std::decay_t<F>>::signature>;
+		}
 
 		namespace types {
 			template <typename Container>
@@ -521,6 +565,70 @@ namespace quickjs {
 		}
 
 		namespace detail {
+			namespace func {
+				template <typename...>
+				struct JSFnContext;
+
+				template <typename Ret, typename... Args>
+				struct JSFnContext<std::function<Ret(Args...)>> {
+					JSContext* ctx;
+					std::function<Ret(Args...)> caller;
+				};
+
+				template <typename Fn, std::size_t... Is>
+				JSValue js_fn_call_impl(std::false_type, std::index_sequence<Is...>, JSFnContext<Fn>* fnctx, const JSArguments& arguments) {
+					using traits = type_traits::is_std_function<Fn>;
+					using R = typename traits::return_type;
+					try {
+						R ret = fnctx->caller(arguments[Is].template to<std::tuple_element_t<Is, typename traits::arg_types>>()...);
+						return quickjs::toJSValue<R>(fnctx->ctx, ret).release();
+					} catch (quickjs::type_error& err) {
+						throw quickjs::type_error(err.what());
+					} catch (const std::exception& err) {
+						return JS_ThrowReferenceError(fnctx->ctx, err.what());
+					}
+				}
+
+				template <typename Fn, std::size_t... Is>
+				JSValue js_fn_call_impl(std::true_type, std::index_sequence<Is...>, JSFnContext<Fn>* fnctx, const JSArguments& arguments) {
+					using traits = type_traits::is_std_function<Fn>;
+					using R = typename traits::return_type;
+					try {
+						fnctx->caller(arguments[Is].template to<std::tuple_element_t<Is, typename traits::arg_types>>()...);
+						return JS_UNDEFINED;
+					} catch (quickjs::type_error& err) {
+						throw quickjs::type_error(err.what());
+					} catch (const std::exception& err) {
+						return JS_ThrowReferenceError(fnctx->ctx, err.what());
+					}
+				}
+
+				template <typename Fn>
+				std::enable_if_t<type_traits::is_std_function<Fn>::value, JSValue>
+					js_fn_call(JSContext* ctx, JSValueConst this_val,
+							   int argc, JSValueConst* argv,
+							   int magic, void* data) {
+					using traits = type_traits::is_std_function<Fn>;
+					using FnContext = type_traits::detail::func::JSFnContext<Fn>;
+					using is_void = std::is_void<std::decay_t<typename traits::return_type>>;
+					FnContext* fnctx = (FnContext*)data;
+					JSArguments arguments(ctx, argc, argv);
+
+					constexpr size_t N = traits::size;
+					try {
+						arguments.requireArgumentSize(N);
+						return js_fn_call_impl<Fn>(is_void{}, std::make_index_sequence<N>{}, fnctx, arguments);
+					} catch (const quickjs::type_error& err) {
+						return JS_ThrowTypeError(fnctx->ctx, err.what());
+					}
+				}
+
+				template <typename T>
+				static void js_fn_finalizer(void* data) {
+					delete (JSFnContext<T>*)data;
+				}
+			}
+
 			template<typename T>
 			std::enable_if_t<std::is_same_v<std::decay_t<T>, JSValueRef>
 				|| std::is_base_of_v<JSValueRef, std::decay_t<T>>, quickjs::JSValueRef>
@@ -627,6 +735,24 @@ namespace quickjs {
 				new_value_impl(JSContext* ctx, const Tuple& val) {
 				return new_tuple_impl(ctx, val,
 								  std::make_index_sequence<std::tuple_size<Tuple>::value>{});
+			}
+
+			template<typename Fn>
+			std::enable_if_t<type_traits::is_std_function<Fn>::value, quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const Fn& val) {
+				using traits = type_traits::is_std_function<Fn>;
+				using FnContext = type_traits::detail::func::JSFnContext<Fn>;
+				constexpr size_t N = traits::size;
+				FnContext* fnctx = new FnContext;
+				fnctx->ctx = ctx;
+				fnctx->caller = val;
+				std::string name = "lambda_" + std::to_string(reinterpret_cast<uintptr_t>(&fnctx)) + "@" + std::to_string(N);
+				JSValue closure = JS_NewCClosure(ctx,
+												 &type_traits::detail::func::js_fn_call<Fn>,
+												 name.c_str(),
+												 &type_traits::detail::func::js_fn_finalizer<Fn>,
+												 static_cast<int>(N), 0, fnctx);
+				return JSValueRef(ctx, closure);
 			}
 		}
 	}
@@ -1087,9 +1213,7 @@ namespace quickjs {
 
 		template<>
 		bool is<JSType::promise>() const {
-			if (!context)
-				return false;
-			return JS_IsPromise(context, jsvalue);
+			return JS_IsPromise(jsvalue);
 		}
 
 		template<>
@@ -1706,11 +1830,10 @@ namespace quickjs {
 			return as_tuple_impl<Tuple>(std::make_index_sequence<N>{}, nested);
 		}
 
-
 		template<typename ArgTypes, std::size_t N>
-		typename std::enable_if_t<std::tuple_size<ArgTypes>::value != 0, JSValueRef>
+		std::enable_if_t<std::tuple_size<ArgTypes>::value != 0, JSValueRef>
 			as_function_impl_thisArg(const std::array<JSValueRef, N>& arg_refs) {
-			using Arg0 = std::tuple_element<0, typename ArgTypes>::type;
+			using Arg0 = typename std::tuple_element<0, ArgTypes>::type;
 			if (std::is_same_v<std::decay_t<Arg0>, JSValueRef>
 				|| std::is_base_of_v<JSValueRef, std::decay_t<Arg0>>
 				|| std::is_same_v<std::decay_t<Arg0>, JSValue>) {
@@ -1720,7 +1843,7 @@ namespace quickjs {
 		}
 
 		template<typename ArgTypes, std::size_t N>
-		typename std::enable_if_t<std::tuple_size<ArgTypes>::value == 0, JSValueRef>
+		std::enable_if_t<std::tuple_size<ArgTypes>::value == 0, JSValueRef>
 			as_function_impl_thisArg(const std::array<JSValueRef, N>& arg_refs) {
 			return JSValueRef(context, JS_UNDEFINED);
 		}
@@ -2104,7 +2227,7 @@ namespace quickjs {
 
 		/* maybe assertion failed: list_empty(&rt->gc_obj_list), when use 'arguments[0][5].value<bool>()' but throw exception */
 		/* Fix : Enable the MSVC compiler's exception handling(/EHsc) for the C++ project */
-		quickjs::JSArgumentRef operator[](int idx) {
+		quickjs::JSArgumentRef operator[](int idx) const {
 			if (std::abs(idx) >= size()) {
 				return quickjs::JSArgumentRef(idx);
 			}
@@ -2352,6 +2475,20 @@ namespace quickjs {
 	template<typename T>
 	inline quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) {
 		return type_traits::detail::new_value_impl<T>(ctx, val);
+	}
+
+	template <typename Signature, typename Fn>
+	inline std::enable_if_t <type_traits::function::has_signature<std::decay_t<Fn>>::value &&
+		std::is_same_v<Signature,typename type_traits::function::function_traits<std::decay_t<Fn>>::signature>, quickjs::JSValueRef>
+		toJSValue(JSContext* ctx, const Fn& fn) {
+		return type_traits::detail::new_value_impl<std::function<Signature>>(ctx, fn);
+	}
+
+	template <typename Fn>
+	inline std::enable_if_t<type_traits::function::has_signature<std::decay_t<Fn>>::value, quickjs::JSValueRef>
+		toJSValue(JSContext* ctx, Fn&& fn) {
+		using fn_t = std::function<typename type_traits::function::function_traits<std::decay_t<Fn>>::signature>;
+		return type_traits::detail::new_value_impl<fn_t>(ctx, fn_t(std::forward<Fn>(fn)));
 	}
 }
 #endif //__cplusplus
