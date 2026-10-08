@@ -2005,64 +2005,119 @@ namespace quickjs {
 	public:
 		JSPropertyRef() = delete;
 
-		explicit JSPropertyRef(JSContext* ctx, JSValue val, std::string name) :JSValueRef(ctx, val),
+		explicit JSPropertyRef(JSContext* ctx, JSValue owner, JSValue val, std::string name, bool is_index = false) :JSValueRef(ctx, val),
+			context(ctx),
 			property_name(name),
-			property_exists(ctx != nullptr) {}
+			property_exists(!JS_IsUndefined(val)),
+			owner_isarray(is_index) {
+			property_owner = JSValueRef(ctx, JS_DupValue(ctx, owner));
+		}
 
-		explicit JSPropertyRef(std::string name) :JSValueRef(),
+		explicit JSPropertyRef(JSContext* ctx, JSValue owner, std::string name, bool is_index = false) :JSValueRef(ctx, JS_UNDEFINED),
+			context(ctx),
 			property_name(name),
-			property_exists(false) {}
+			property_exists(false),
+			owner_isarray(is_index) {
+			property_owner = JSValueRef(ctx, JS_DupValue(ctx, owner));
+		}
 
 		JSPropertyRef(const JSPropertyRef& other) = delete;
 
 		JSPropertyRef(JSPropertyRef&& other) noexcept :JSValueRef(std::move(other)),
+			context(other.context),
 			property_name(other.property_name),
-			property_exists(other.property_exists) {
+			property_exists(other.property_exists),
+			owner_isarray(other.owner_isarray) {
+			property_owner = std::move(other.property_owner);
+			other.context = nullptr;
 			other.property_name.clear();
 			other.property_exists = false;
+			other.owner_isarray = false;
 		}
 
 		JSPropertyRef& operator=(const JSPropertyRef& other) = delete;
 
 		JSPropertyRef& operator=(JSPropertyRef&& other) noexcept {
 			if (this != &other) {
+				context = other.context;
 				property_name = other.property_name;
 				property_exists = other.property_exists;
+				owner_isarray = other.owner_isarray;
+				property_owner = std::move(other.property_owner);
+				other.context = nullptr;
 				other.property_name.clear();
 				other.property_exists = false;
+				other.owner_isarray = false;
 				JSValueRef::operator=(std::move(other));
 			}
 			return *this;
 		}
 
-		void reset(JSContext* ctx = nullptr, JSValue val = JS_UNDEFINED, std::string name = std::string()) noexcept {
+		template<typename T,
+			typename = std::enable_if_t<!std::is_same<std::decay_t<T>, JSValue>::value>>
+			JSPropertyRef & operator=(T&& val) {
+			if (property_owner.is<JSType::undefined>() || !context)
+				throw quickjs::type_error("cannot set properties of undefined");
+			JSValue jsval = quickjs::toJSValue<std::decay_t<T>>(
+				context, std::forward<T>(val)).release();
+			if (JS_SetPropertyStr(context, property_owner.get(),
+								  property_name.c_str(), jsval) > 0)
+				JSValueRef::reset(context, JS_DupValue(context, jsval));
+			return *this;
+		}
+
+		/* When T is JSValue, quickjs::toJSValue calls JS_DupValue, so the original data isn't released properly */
+		template<typename T,
+			typename = std::enable_if_t<std::is_same<std::decay_t<T>, JSValue>::value>,
+			typename = void>
+		JSPropertyRef& operator=(T&& val) {
+			if (property_owner.is<JSType::undefined>() || !context)
+				throw quickjs::type_error("cannot set properties of undefined");
+			JSValue jsval = val;
+			if (JS_SetPropertyStr(context, property_owner.get(),
+								  property_name.c_str(), jsval) > 0)
+				JSValueRef::reset(context, JS_DupValue(context, jsval));
+			return *this;
+		}
+
+		void reset(JSContext* ctx = nullptr, JSValue owner = JS_UNDEFINED,
+				   JSValue val = JS_UNDEFINED, std::string name = std::string(),
+				   bool is_index = false) noexcept {
+			context = ctx;
 			property_name = name;
-			property_exists = ctx != nullptr;
+			property_owner.reset(ctx, JS_DupValue(ctx, owner));
+			property_exists = !JS_IsUndefined(val);
+			owner_isarray = is_index;
 			JSValueRef::reset(ctx, val);
 		}
 
 		JSValue release() noexcept {
+			context = nullptr;
 			property_name.clear();
 			property_exists = false;
+			owner_isarray = false;
+			property_owner.reset();
 			return JSValueRef::release();
 		}
 
 		virtual ~JSPropertyRef() {
-			property_name.clear();
-			property_exists = false;
+			reset();
 		}
 
 	private:
+		JSContext* context;
 		bool property_exists;
+		bool owner_isarray;
 		std::string property_name;
+		JSValueRef property_owner;
 
 	protected:
 		virtual quickjs::type_error type_error(const std::string& msg) const override {
 			std::string msg_ = msg;
 			if (!property_exists) {
-				msg_ = quickjs::format_str("no property named '%s'", property_name.c_str());
+				msg_ = quickjs::format_str("no property %s '%s'", owner_isarray ? "at index" : "named", property_name.c_str());
 			} else if (!property_name.empty()) {
-				msg_ = quickjs::format_str("%s at property named '%s'", msg.c_str(), property_name.c_str());
+				msg_ = quickjs::format_str("%s at property %s '%s'", msg.c_str(), owner_isarray ? "index" : "named", property_name.c_str());
 			}
 			return quickjs::type_error(msg_);
 		}
@@ -2086,9 +2141,9 @@ namespace quickjs {
 		}
 		JSAtomRef prop(context, *JSValueRef(context, JS_NewString(context, key)));
 		if (JS_HasProperty(context, jsvalue, *prop)) {
-			return quickjs::JSPropertyRef(context, JS_GetProperty(context, jsvalue, *prop), key);
+			return quickjs::JSPropertyRef(context, jsvalue, JS_GetProperty(context, jsvalue, *prop), key);
 		}
-		return quickjs::JSPropertyRef(key);
+		return quickjs::JSPropertyRef(context, jsvalue, key);
 	}
 
 	inline quickjs::JSPropertyRef quickjs::JSValueRef::operator[](int idx) const {
@@ -2097,9 +2152,9 @@ namespace quickjs {
 		}
 		JSAtomRef prop(context, *JSValueRef(context, JS_NewInt32(context, idx)));
 		if (JS_HasProperty(context, jsvalue, *prop)) {
-			return quickjs::JSPropertyRef(context, JS_GetProperty(context, jsvalue, *prop), quickjs::format_str("[%d]", idx));
+			return quickjs::JSPropertyRef(context, jsvalue, JS_GetProperty(context, jsvalue, *prop), quickjs::format_str("%d", idx), true);
 		}
-		return quickjs::JSPropertyRef(quickjs::format_str("[%d]", idx));
+		return quickjs::JSPropertyRef(context, jsvalue, quickjs::format_str("%d", idx), true);
 	}
 	/*
 	=============================================[ JSValueRef ]===============================================
@@ -2475,16 +2530,24 @@ namespace quickjs {
 	}
 
 	/**
-	 * @brief Converts a C++ value to a QuickJS value.
-	 *
-	 * Dispatches to the matching @c new_value_impl overload via SFINAE.
-	 *
-	 * @tparam T   Input type (decayed before dispatch).
-	 * @param ctx  QuickJS context.
-	 * @param val  Value to convert (const ref, no copy).
-	 * @return Owning @c JSValueRef of the new QuickJS value.
-	 * @throws std::exception on unsupported or failed conversion.
-	 */
+	* @brief Converts a C++ value to a QuickJS value.
+	*
+	* Dispatches to the matching @c new_value_impl overload via SFINAE.
+	*
+	* @note When @c T is @c JSValue or @c JSValueRef, @c JS_DupValue is called
+	*       on the underlying value, so the returned @c JSValueRef holds a new
+	*       owning reference that is independent of @p val. The original @p val
+	*       is left untouched and remains owned by its caller. The caller is
+	*       responsible for releasing the returned reference (e.g. via
+	*       @c JS_FreeValue) when it is no longer needed.
+	*
+	* @tparam T   Input type (decayed before dispatch).
+	* @param ctx  QuickJS context.
+	* @param val  Value to convert (passed by const ref; the underlying value
+	*             may be refcounted, see @note).
+	* @return Owning @c JSValueRef of the new QuickJS value.
+	* @throws std::exception on unsupported or failed conversion.
+	*/
 	template<typename T>
 	inline quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) {
 		return type_traits::detail::new_value_impl<T>(ctx, val);
