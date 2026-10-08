@@ -579,28 +579,18 @@ namespace quickjs {
 				JSValue js_fn_call_impl(std::false_type, std::index_sequence<Is...>, JSFnContext<Fn>* fnctx, const JSArguments& arguments) {
 					using traits = type_traits::is_std_function<Fn>;
 					using R = typename traits::return_type;
-					try {
-						R ret = fnctx->caller(arguments[Is].template to<std::tuple_element_t<Is, typename traits::arg_types>>()...);
-						return quickjs::toJSValue<R>(fnctx->ctx, ret).release();
-					} catch (quickjs::type_error& err) {
-						throw quickjs::type_error(err.what());
-					} catch (const std::exception& err) {
-						return JS_ThrowReferenceError(fnctx->ctx, err.what());
-					}
+
+					R ret = fnctx->caller(arguments[Is].template to<std::tuple_element_t<Is, typename traits::arg_types>>()...);
+					return quickjs::toJSValue<R>(fnctx->ctx, ret).release();
 				}
 
 				template <typename Fn, std::size_t... Is>
 				JSValue js_fn_call_impl(std::true_type, std::index_sequence<Is...>, JSFnContext<Fn>* fnctx, const JSArguments& arguments) {
 					using traits = type_traits::is_std_function<Fn>;
 					using R = typename traits::return_type;
-					try {
-						fnctx->caller(arguments[Is].template to<std::tuple_element_t<Is, typename traits::arg_types>>()...);
-						return JS_UNDEFINED;
-					} catch (quickjs::type_error& err) {
-						throw quickjs::type_error(err.what());
-					} catch (const std::exception& err) {
-						return JS_ThrowReferenceError(fnctx->ctx, err.what());
-					}
+
+					fnctx->caller(arguments[Is].template to<std::tuple_element_t<Is, typename traits::arg_types>>()...);
+					return JS_UNDEFINED;
 				}
 
 				template <typename Fn>
@@ -619,7 +609,9 @@ namespace quickjs {
 						arguments.requireArgumentSize(N);
 						return js_fn_call_impl<Fn>(is_void{}, std::make_index_sequence<N>{}, fnctx, arguments);
 					} catch (const quickjs::type_error& err) {
-						return JS_ThrowTypeError(fnctx->ctx, err.what());
+						return JS_ThrowTypeError(ctx, err.what());
+					} catch (const std::exception& err) {
+						return JS_ThrowReferenceError(ctx, err.what());
 					}
 				}
 
@@ -2465,6 +2457,8 @@ namespace quickjs {
 	 * @return The string representation, or an empty string on failure.
 	 */
 	inline std::string to_string(const quickjs::JSValueRef& ref) {
+		if (!ref.context)
+			return std::string();
 		const char* cstr;
 		if (ref.is<JSType::exception>()) {
 			JSValue err = JS_GetException(ref.context);
