@@ -1484,6 +1484,19 @@ namespace quickjs {
 		}
 
 	private:
+		bool cast_check_throw(std::string& err, bool strict) const {
+			if (is<JSType::exception>()) {
+				err = quickjs::to_string(*this);
+				if (err.empty())
+					err = "exception type";
+				throw quickjs::type_error(err);
+			}
+			if (is<JSType::uninitialized>()) {
+				throw type_error("uninitialized type");
+			}
+			return true;
+		}
+
 		/**
 		 * @brief Checks whether the current JSValue can be safely converted to type T.
 		 *
@@ -1503,6 +1516,7 @@ namespace quickjs {
 		template<typename T>
 		std::enable_if_t<std::is_same_v<std::decay_t<T>, bool>, bool>
 			cast_check(std::string& err, bool strict) const {
+			cast_check_throw(err, strict);
 			if (strict && !is<T>()) {
 				err = quickjs::format_str("%s is required", type_name<T>().c_str());
 				return false;
@@ -1514,6 +1528,7 @@ namespace quickjs {
 		std::enable_if_t<(std::is_integral_v<std::decay_t<T>>
 			|| std::is_floating_point_v<std::decay_t<T>>) && !std::is_same_v<std::decay_t<T>, bool>, bool>
 			cast_check(std::string& err, bool strict) const {
+			cast_check_throw(err, strict);
 			if (is<JSType::symbol>()) {
 				err = "cannot convert a Symbol value to a number";
 				return false;
@@ -1539,6 +1554,7 @@ namespace quickjs {
 			|| std::is_same_v<std::decay_t<T>, quickjs::JSCString>
 			|| std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>, bool>
 			cast_check(std::string& err, bool strict) const {
+			cast_check_throw(err, strict);
 			if (is<JSType::symbol>()) {
 				err = "cannot convert a Symbol value to a string";
 				return false;
@@ -1553,6 +1569,7 @@ namespace quickjs {
 		template<typename T>
 		std::enable_if_t<type_traits::is_std_function<T>::value, bool>
 			cast_check(std::string& err, bool strict) const {
+			cast_check_throw(err, strict);
 			if (!is<T>()) {
 				err = "function is required";
 				return false;
@@ -1569,6 +1586,7 @@ namespace quickjs {
 			|| type_traits::is_std_list<T>::value
 			|| type_traits::is_std_forward_list<T>::value, bool>
 			cast_check(std::string& err, bool strict) const {
+			cast_check_throw(err, strict);
 			if (!is<T>()) {
 				err = "array is required";
 				return false;
@@ -1579,6 +1597,7 @@ namespace quickjs {
 		template<typename T>
 		std::enable_if_t<type_traits::is_std_map<T>::value, bool>
 			cast_check(std::string& err, bool strict) const {
+			cast_check_throw(err, strict);
 			if (!is<T>()) {
 				err = "object is required";
 				return false;
@@ -2478,8 +2497,8 @@ namespace quickjs {
 	}
 
 	template <typename Signature, typename Fn>
-	inline std::enable_if_t <type_traits::function::has_signature<std::decay_t<Fn>>::value &&
-		std::is_same_v<Signature,typename type_traits::function::function_traits<std::decay_t<Fn>>::signature>, quickjs::JSValueRef>
+	inline std::enable_if_t <type_traits::function::has_signature<std::decay_t<Fn>>::value&&
+		std::is_same_v<Signature, typename type_traits::function::function_traits<std::decay_t<Fn>>::signature>, quickjs::JSValueRef>
 		toJSValue(JSContext* ctx, const Fn& fn) {
 		return type_traits::detail::new_value_impl<std::function<Signature>>(ctx, fn);
 	}
