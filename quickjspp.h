@@ -2005,14 +2005,16 @@ namespace quickjs {
 	public:
 		JSPropertyRef() = delete;
 
+		/* A JSValue argument indicates the key exists (property_exists == true). */
 		explicit JSPropertyRef(JSContext* ctx, JSValue owner, JSValue val, std::string name, bool is_index = false) :JSValueRef(ctx, val),
 			context(ctx),
 			property_name(name),
-			property_exists(!JS_IsUndefined(val)),
+			property_exists(true),
 			owner_isarray(is_index) {
 			property_owner = JSValueRef(ctx, JS_DupValue(ctx, owner));
 		}
 
+		/* No value argument indicates the key does not exist (property_exists == false). */
 		explicit JSPropertyRef(JSContext* ctx, JSValue owner, std::string name, bool is_index = false) :JSValueRef(ctx, JS_UNDEFINED),
 			context(ctx),
 			property_name(name),
@@ -2082,11 +2084,11 @@ namespace quickjs {
 
 		void reset(JSContext* ctx = nullptr, JSValue owner = JS_UNDEFINED,
 				   JSValue val = JS_UNDEFINED, std::string name = std::string(),
-				   bool is_index = false) noexcept {
+				   bool exists = false, bool is_index = false) noexcept {
 			context = ctx;
 			property_name = name;
 			property_owner.reset(ctx, JS_DupValue(ctx, owner));
-			property_exists = !JS_IsUndefined(val);
+			property_exists = exists;
 			owner_isarray = is_index;
 			JSValueRef::reset(ctx, val);
 		}
@@ -2140,8 +2142,14 @@ namespace quickjs {
 			throw type_error("object is required");
 		}
 		JSAtomRef prop(context, *JSValueRef(context, JS_NewString(context, key)));
-		if (JS_HasProperty(context, jsvalue, *prop)) {
-			return quickjs::JSPropertyRef(context, jsvalue, JS_GetProperty(context, jsvalue, *prop), key);
+		int has_prop = JS_HasProperty(context, jsvalue, *prop);
+		if (has_prop < 0)
+			throw type_error("failed to check property existence");
+		if (has_prop) {
+			JSValueRef prop_val(context, JS_GetProperty(context, jsvalue, *prop));
+			if (prop_val.is<JSType::exception>())
+				throw type_error(quickjs::to_string(prop_val));
+			return quickjs::JSPropertyRef(context, jsvalue, prop_val.release(), key);
 		}
 		return quickjs::JSPropertyRef(context, jsvalue, key);
 	}
@@ -2151,8 +2159,14 @@ namespace quickjs {
 			throw type_error("array is required");
 		}
 		JSAtomRef prop(context, *JSValueRef(context, JS_NewInt32(context, idx)));
-		if (JS_HasProperty(context, jsvalue, *prop)) {
-			return quickjs::JSPropertyRef(context, jsvalue, JS_GetProperty(context, jsvalue, *prop), quickjs::format_str("%d", idx), true);
+		int has_prop = JS_HasProperty(context, jsvalue, *prop);
+		if (has_prop < 0)
+			throw type_error("failed to check index existence");
+		if (has_prop) {
+			JSValueRef prop_val(context, JS_GetProperty(context, jsvalue, *prop));
+			if (prop_val.is<JSType::exception>())
+				throw type_error(quickjs::to_string(prop_val));
+			return quickjs::JSPropertyRef(context, jsvalue, prop_val.release(), quickjs::format_str("%d", idx), true);
 		}
 		return quickjs::JSPropertyRef(context, jsvalue, quickjs::format_str("%d", idx), true);
 	}
