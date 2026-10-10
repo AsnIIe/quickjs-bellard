@@ -308,6 +308,7 @@ namespace quickjs {
 	class JSArguments;
 
 	std::string to_string(const JSValueRef& ref) noexcept;
+	JSValue throwNamedError(JSContext* ctx, std::string name, const char* fmt, ...) noexcept;
 	template<typename T>
 	quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) noexcept;
 
@@ -708,7 +709,7 @@ namespace quickjs {
 					} catch (const quickjs::type_error& err) {
 						return JS_ThrowTypeError(ctx, err.what());
 					} catch (const std::exception& err) {
-						return JS_ThrowReferenceError(ctx, err.what());
+						return quickjs::throwNamedError(ctx, "NativeError", err.what());
 					}
 				}
 
@@ -2686,6 +2687,39 @@ namespace quickjs {
 			JS_FreeCString(ref.context, cstr);
 		}
 		return str;
+	}
+
+	/**
+	* @brief Throw a JS error with a custom name and formatted message.
+	*
+	* @param ctx   QuickJS context.
+	* @param name  Custom error name (e.g. "TypeError").
+	* @param fmt   printf-style format string for the message.
+	* @param ...   Arguments matching @p fmt.
+	* @return JS_EXCEPTION; return this from a native callback to propagate.
+	*
+	* @note Ownership of the error object is transferred to the context by
+	*       JS_Throw(); do not free it.
+	* @warning Uses a fixed static 2048-byte buffer: not thread-safe, not
+	*          reentrant, and long messages are truncated.
+	*/
+	inline JSValue throwNamedError(JSContext* ctx, std::string name, const char* fmt, ...) noexcept {
+		JSValue error = JS_NewError(ctx);
+		JS_SetPropertyStr(ctx, error, "name", JS_NewString(ctx, name.c_str()));
+
+		static char buf[2048];
+#ifdef _MSC_VER
+#pragma warning(disable : 4996)
+#endif
+		va_list args;
+		va_start(args, fmt);
+		vsnprintf(buf, sizeof(buf), fmt, args);
+		va_end(args);
+#ifdef _MSC_VER
+#pragma warning(default : 4996)
+#endif
+		JS_SetPropertyStr(ctx, error, "message", JS_NewString(ctx, buf));
+		return JS_Throw(ctx, error);
 	}
 
 	/**
