@@ -270,7 +270,7 @@ namespace quickjs {
 		struct JSONStringConverter {
 			const char* unwrap(JSContext* ctx, JSValue val) {
 				JSValue jsstr = JS_JSONStringify(ctx, val, JS_UNDEFINED, JS_UNDEFINED);
-				if (JS_IsString(jsstr)) {
+				if (!JS_IsString(jsstr)) {
 					JS_FreeValue(ctx, jsstr);
 					throw quickjs::type_error("stringify error");
 				}
@@ -872,7 +872,7 @@ namespace quickjs {
 	public:
 		JSCStringRef() noexcept = default;
 
-		explicit JSCStringRef(JSContext* ctx, JSValue val)
+		explicit JSCStringRef(JSContext* ctx, JSValueConst val)
 			:context(ctx), strptr(character.unwrap(ctx, val)) {}
 
 		explicit JSCStringRef(JSContext* ctx, JSAtom atom) :context(ctx) {
@@ -951,7 +951,7 @@ namespace quickjs {
 
 		}
 
-		explicit JSAtomRef(JSContext* ctx, JSValue val)
+		explicit JSAtomRef(JSContext* ctx, JSValueConst val)
 			:context(ctx), jsatom(JS_ValueToAtom(ctx, val)) {}
 
 		JSAtomRef(const JSAtomRef& other) = delete;
@@ -1021,7 +1021,7 @@ namespace quickjs {
 		}
 
 		virtual ~JSValueRef() {
-			if (context && jsvalue != JS_UNDEFINED) {
+			if (context && !JS_IsUninitialized(jsvalue)) {
 				JS_FreeValue(context, jsvalue);
 			}
 			release();
@@ -1045,11 +1045,11 @@ namespace quickjs {
 
 		JSValue release() noexcept {
 			context = nullptr;
-			return std::exchange(jsvalue, JS_UNDEFINED);
+			return std::exchange(jsvalue, JS_UNINITIALIZED);
 		}
 
-		void reset(JSContext* ctx = nullptr, JSValue val = JS_UNDEFINED) noexcept {
-			if (context && jsvalue != JS_UNDEFINED) {
+		void reset(JSContext* ctx = nullptr, JSValue val = JS_UNINITIALIZED) noexcept {
+			if (context && !JS_IsUninitialized(jsvalue)) {
 				JS_FreeValue(context, jsvalue);
 			}
 			context = ctx;
@@ -1344,7 +1344,7 @@ namespace quickjs {
 		std::enable_if_t<!std::is_same_v<std::decay_t<T>, const char*>
 			&& !std::is_same_v<std::decay_t<T>, char*>, T>
 			as(T default_val, bool throw_err = true) const {
-			if (!context) {
+			if (JS_IsUninitialized(jsvalue)) {
 				return default_val;
 			} else if (!is<T>()) {
 				if (!throw_err)
@@ -1864,9 +1864,9 @@ namespace quickjs {
 			return as_tuple_impl<Tuple>(std::make_index_sequence<N>{}, nested);
 		}
 
-		template<typename ArgTypes, std::size_t N>
+		template<typename ArgTypes>
 		std::enable_if_t<std::tuple_size<ArgTypes>::value != 0, JSValueRef>
-			as_function_impl_thisArg(const std::array<JSValueRef, N>& arg_refs) {
+			as_function_impl_thisArg(const std::vector<JSValueRef>& arg_refs) {
 			using Arg0 = typename std::tuple_element<0, ArgTypes>::type;
 			if (std::is_same_v<std::decay_t<Arg0>, JSValueRef>
 				|| std::is_base_of_v<JSValueRef, std::decay_t<Arg0>>
@@ -1876,9 +1876,9 @@ namespace quickjs {
 			return JSValueRef(context, JS_UNDEFINED);
 		}
 
-		template<typename ArgTypes, std::size_t N>
+		template<typename ArgTypes>
 		std::enable_if_t<std::tuple_size<ArgTypes>::value == 0, JSValueRef>
-			as_function_impl_thisArg(const std::array<JSValueRef, N>& arg_refs) {
+			as_function_impl_thisArg(const std::vector<JSValueRef>& arg_refs) {
 			return JSValueRef(context, JS_UNDEFINED);
 		}
 
@@ -1891,10 +1891,16 @@ namespace quickjs {
 
 			auto holder = std::make_shared<JSValueRef>(context, JS_DupValue(context, jsvalue));
 			return Fn([this, holder, context = this->context, strict, nested](typename std::tuple_element<Is, typename traits::arg_types>::type... args) -> R {
-				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
-						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
-					} };
-				JSValueRef thisArg = as_function_impl_thisArg<typename traits::arg_types, sizeof...(Is)>(arg_refs);
+				std::vector<JSValueRef> arg_refs;
+				arg_refs.reserve(sizeof...(Is));
+				using expander = int[];
+				(void)expander {
+					0, (arg_refs.emplace_back(
+						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)
+					), 0)...
+				};
+
+				JSValueRef thisArg = as_function_impl_thisArg<typename traits::arg_types>(arg_refs);
 				std::size_t idx = thisArg.is<JSType::undefined>() ? 0 : 1;
 				std::vector<JSValue> argv;
 				for (; idx < sizeof...(Is); ++idx)
@@ -1920,10 +1926,16 @@ namespace quickjs {
 
 			auto holder = std::make_shared<JSValueRef>(context, JS_DupValue(context, jsvalue));
 			return Fn([this, holder, context = this->context](typename std::tuple_element<Is, typename traits::arg_types>::type... args) -> void {
-				std::array<JSValueRef, sizeof...(Is)> arg_refs = { {
-						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)...
-					} };
-				JSValueRef thisArg = as_function_impl_thisArg<typename traits::arg_types, sizeof...(Is)>(arg_refs);
+				std::vector<JSValueRef> arg_refs;
+				arg_refs.reserve(sizeof...(Is));
+				using expander = int[];
+				(void)expander {
+					0, (arg_refs.emplace_back(
+						quickjs::toJSValue<typename std::tuple_element<Is, typename traits::arg_types>::type>(context, args)
+					), 0)...
+				};
+
+				JSValueRef thisArg = as_function_impl_thisArg<typename traits::arg_types>(arg_refs);
 				std::size_t idx = thisArg.is<JSType::undefined>() ? 0 : 1;
 				std::vector<JSValue> argv;
 				for (; idx < sizeof...(Is); ++idx)
@@ -2009,33 +2021,50 @@ namespace quickjs {
 			return T(context, jsvalue);
 		}
 
-		JSValue jsvalue = JS_UNDEFINED;
+		JSValue jsvalue = JS_UNINITIALIZED;
 		JSContext* context = nullptr;
 
 		friend std::string to_string(const JSValueRef& ref);
 	};
 
+	/**
+	 * @brief A reference to a JavaScript object property, tracking both the owner and the value.
+	 *
+	 * QuickJS's C API has two types of ownership conventions for JSValue,
+	 * which can be quickly determined from the parameter type:
+	 *
+	 * 1. When JSValue is used as a parameter: the function takes over (consumes)
+	 *    this reference. After the call, you must no longer free it. The @c value
+	 *    parameter of @c JS_NewSettledPromise belongs to this category.
+	 *
+	 * 2. When JSValueConst is used as a parameter: the function only borrows it,
+	 *    and the reference still belongs to you. After the call, you still need
+	 *    to free it.
+	 *
+	 * @see https://deepwiki.com/quickjs-ng/quickjs/3-c-api-reference#1
+	 */
 	class JSPropertyRef :public JSValueRef {
 	public:
 		JSPropertyRef() = delete;
 
 		/* A JSValue argument indicates the key exists (property_exists == true). */
-		explicit JSPropertyRef(JSContext* ctx, JSValue owner, JSValue val, std::string name, bool is_index = false) :JSValueRef(ctx, val),
+		explicit JSPropertyRef(JSContext* ctx, JSValueConst owner, JSValue val, std::string name, bool is_array = false) :JSValueRef(ctx, val),
 			context(ctx),
 			property_name(name),
 			property_exists(true),
-			owner_isarray(is_index) {
-			property_owner = JSValueRef(ctx, JS_DupValue(ctx, owner));
-		}
+			owner_isarray(is_array),
+			property_owner(ctx, JS_DupValue(ctx, owner)) {}
 
-		/* No value argument indicates the key does not exist (property_exists == false). */
-		explicit JSPropertyRef(JSContext* ctx, JSValue owner, std::string name, bool is_index = false) :JSValueRef(ctx, JS_UNDEFINED),
+		/*
+		 * No value argument indicates the key does not exist (property_exists == false).
+		 * In JavaScript, accessing a missing key yields JS_UNDEFINED by default.
+		 */
+		explicit JSPropertyRef(JSContext* ctx, JSValueConst owner, std::string name, bool is_array = false) :JSValueRef(ctx, JS_UNDEFINED),
 			context(ctx),
 			property_name(name),
 			property_exists(false),
-			owner_isarray(is_index) {
-			property_owner = JSValueRef(ctx, JS_DupValue(ctx, owner));
-		}
+			owner_isarray(is_array),
+			property_owner(ctx, JS_DupValue(ctx, owner)) {}
 
 		JSPropertyRef(const JSPropertyRef& other) = delete;
 
@@ -2043,8 +2072,8 @@ namespace quickjs {
 			context(other.context),
 			property_name(other.property_name),
 			property_exists(other.property_exists),
-			owner_isarray(other.owner_isarray) {
-			property_owner = std::move(other.property_owner);
+			owner_isarray(other.owner_isarray),
+			property_owner(std::move(other.property_owner)) {
 			other.context = nullptr;
 			other.property_name.clear();
 			other.property_exists = false;
@@ -2072,7 +2101,7 @@ namespace quickjs {
 		template<typename T,
 			typename = std::enable_if_t<!std::is_same<std::decay_t<T>, JSValue>::value>>
 			JSPropertyRef & operator=(T&& val) {
-			if (property_owner.is<JSType::undefined>() || !context)
+			if (property_owner.is<JSType::undefined>())
 				throw quickjs::type_error("cannot set properties of undefined");
 			JSValue jsval = quickjs::toJSValue<std::decay_t<T>>(
 				context, std::forward<T>(val)).release();
@@ -2087,7 +2116,7 @@ namespace quickjs {
 			typename = std::enable_if_t<std::is_same<std::decay_t<T>, JSValue>::value>,
 			typename = void>
 		JSPropertyRef& operator=(T&& val) {
-			if (property_owner.is<JSType::undefined>() || !context)
+			if (property_owner.is<JSType::undefined>())
 				throw quickjs::type_error("cannot set properties of undefined");
 			JSValue jsval = val;
 			if (JS_SetPropertyStr(context, property_owner.get(),
@@ -2096,14 +2125,14 @@ namespace quickjs {
 			return *this;
 		}
 
-		void reset(JSContext* ctx = nullptr, JSValue owner = JS_UNDEFINED,
-				   JSValue val = JS_UNDEFINED, std::string name = std::string(),
-				   bool exists = false, bool is_index = false) noexcept {
+		void reset(JSContext* ctx = nullptr, JSValueConst owner = JS_UNDEFINED,
+				   JSValue val = JS_UNINITIALIZED, std::string name = std::string(),
+				   bool is_array = false) noexcept {
 			context = ctx;
 			property_name = name;
 			property_owner.reset(ctx, JS_DupValue(ctx, owner));
-			property_exists = exists;
-			owner_isarray = is_index;
+			property_exists = !JS_IsUninitialized(val);
+			owner_isarray = is_array;
 			JSValueRef::reset(ctx, val);
 		}
 
@@ -2192,21 +2221,23 @@ namespace quickjs {
 	public:
 		JSArgumentRef() = delete;
 
+		/* A JSValue argument indicates the JSArgument exists (argument_exists == true). */
 		explicit JSArgumentRef(JSContext* ctx, JSValue val, int arg_idx) :JSValueRef(ctx, val),
 			argument_idx(arg_idx),
-			no_arguments(ctx == nullptr) {}
+			argument_exists(true) {}
 
-		explicit JSArgumentRef(int arg_idx) :JSValueRef(),
+		/* No value argument indicates the JSArgument does not exist (argument_exists == false). */
+		explicit JSArgumentRef(JSContext* ctx, int arg_idx) :JSValueRef(ctx, JS_UNINITIALIZED),
 			argument_idx(arg_idx),
-			no_arguments(true) {}
+			argument_exists(false) {}
 
 		JSArgumentRef(const JSArgumentRef& other) = delete;
 
 		JSArgumentRef(JSArgumentRef&& other) noexcept :JSValueRef(std::move(other)),
 			argument_idx(other.argument_idx),
-			no_arguments(other.no_arguments) {
+			argument_exists(other.argument_exists) {
 			other.argument_idx = -1;
-			other.no_arguments = true;
+			other.argument_exists = false;
 		}
 
 		JSArgumentRef& operator=(const JSArgumentRef& other) = delete;
@@ -2214,29 +2245,29 @@ namespace quickjs {
 		JSArgumentRef& operator=(JSArgumentRef&& other) noexcept {
 			if (this != &other) {
 				argument_idx = other.argument_idx;
-				no_arguments = other.no_arguments;
+				argument_exists = other.argument_exists;
 				other.argument_idx = -1;
-				other.no_arguments = true;
+				other.argument_exists = false;
 				JSValueRef::operator=(std::move(other));
 			}
 			return *this;
 		}
 
-		void reset(JSContext* ctx = nullptr, JSValue val = JS_UNDEFINED, int arg_idx = -1) noexcept {
+		void reset(JSContext* ctx = nullptr, JSValue val = JS_UNINITIALIZED, int arg_idx = -1) noexcept {
 			argument_idx = arg_idx;
-			no_arguments = ctx == nullptr;
+			argument_exists = !JS_IsUninitialized(val);
 			JSValueRef::reset(ctx, val);
 		}
 
 		JSValue release() noexcept {
 			argument_idx = -1;
-			no_arguments = true;
+			argument_exists = false;
 			return JSValueRef::release();
 		}
 
 		virtual ~JSArgumentRef() {
 			argument_idx = -1;
-			no_arguments = true;
+			argument_exists = false;
 		}
 
 		/**
@@ -2286,7 +2317,7 @@ namespace quickjs {
 	protected:
 		virtual quickjs::type_error type_error(const std::string& msg) const override {
 			std::string msg_ = msg;
-			if (no_arguments) {
+			if (!argument_exists) {
 				msg_ = quickjs::format_str("%s at arguments[%d], but no argument present", msg.c_str(), argument_idx);
 			} else if (argument_idx >= 0) {
 				msg_ = quickjs::format_str("%s at arguments[%d]", msg.c_str(), argument_idx);
@@ -2296,7 +2327,7 @@ namespace quickjs {
 
 	private:
 		int argument_idx = -1;
-		bool no_arguments = true;
+		bool argument_exists = false;
 	};
 
 	/*Note : Return quickjs::JSArgumentRef, Invoke JS_DupValue and save an additional argument index */
@@ -2305,11 +2336,13 @@ namespace quickjs {
 		if (Index < argc) {
 			return quickjs::JSArgumentRef(ctx, JS_DupValue(ctx, argv[Index]), Index);
 		}
-		return quickjs::JSArgumentRef(Index);
+		return quickjs::JSArgumentRef(ctx, Index);
 	}
 
 	class JSArguments {
 	public:
+		JSArguments() = delete;
+
 		explicit JSArguments(JSContext* ctx, int argc, JSValueConst* argv)
 			:ctx_(ctx), argc_(argc), argv_(argv), argumentsGroupId(-1), isGroupRegisted(false) {}
 
@@ -2323,7 +2356,7 @@ namespace quickjs {
 		/* Fix : Enable the MSVC compiler's exception handling(/EHsc) for the C++ project */
 		quickjs::JSArgumentRef operator[](int idx) const {
 			if (std::abs(idx) >= size()) {
-				return quickjs::JSArgumentRef(idx);
+				return quickjs::JSArgumentRef(ctx_, idx);
 			}
 			if (idx >= 0) {
 				return quickjs::JSArgumentRef(ctx_, JS_DupValue(ctx_, argv_[idx]), idx);
