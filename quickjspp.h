@@ -112,49 +112,118 @@ static inline BOOL JS_IsValidUtf8(const char* str) {
 	return TRUE;
 }
 
-/*Note : Auto convert the str of default system encoding to UTF8 and return JS_NewString*/
-static inline JSValue JS_NewStringA(JSContext* ctx, const char* str) {
-	if (!str) {
+/*Note : Auto convert UTF8 str to default system encoding */
+static inline const char* JS_DupCStringLenA(JSContext* ctx, const char* cstr, size_t len, size_t* plen) {
+	if (!ctx || !cstr)
+		return NULL;
+	if (!JS_IsValidUtf8(cstr))
+		return cstr;
+#if defined(_WIN32)
+	char* acp_str = NULL;
+	wchar_t* wide_buffer = NULL;
+	int wide_len = 0;
+	int acp_len = 0;
+
+	/* UTF-8 -> UTF-16 */
+	wide_len = MultiByteToWideChar(CP_UTF8, 0, cstr, len, NULL, 0);
+	if (wide_len <= 0) {
+		return NULL;
+	}
+	wide_buffer = (wchar_t*)malloc(sizeof(wchar_t) * (wide_len + 1));
+	if (!wide_buffer) {
+		return NULL;
+	}
+	if (MultiByteToWideChar(CP_UTF8, 0, cstr, len,
+							wide_buffer, wide_len) == 0) {
+		free(wide_buffer);
+		return NULL;
+	}
+	wide_buffer[wide_len] = L'\0';
+	/* UTF-16 -> ACP */
+	acp_len = WideCharToMultiByte(CP_ACP, 0, wide_buffer, wide_len,
+								  NULL, 0, NULL, NULL);
+	if (acp_len <= 0) {
+		free(wide_buffer);
+		return NULL;
+	}
+	acp_str = JS_Mallocz(ctx, char, acp_len + 1);
+	if (!acp_str) {
+		free(wide_buffer);
+		return NULL;
+	}
+	if (WideCharToMultiByte(CP_ACP, 0, wide_buffer, wide_len,
+							acp_str, acp_len, NULL, NULL) == 0) {
+		free(wide_buffer);
+		JS_Free(ctx, acp_str);
+		return NULL;
+	}
+	if (plen)
+		*plen = (size_t)acp_len;
+
+	acp_str[acp_len] = '\0';
+	free(wide_buffer);
+	return acp_str;
+#else
+#error "other types of compilers are not supported yet";
+#endif
+}
+
+/*Note : Auto convert the str of default system encoding to UTF8 and return JS_NewStringLen*/
+static inline JSValue JS_NewStringLenA(JSContext* ctx, const char* str, size_t len) {
+	if (!ctx || !str) {
 		return JS_EXCEPTION;
 	}
+	if (len == 0) {
+		return JS_NewString(ctx, "");
+	}
 	if (JS_IsValidUtf8(str)) {
-		return JS_NewString(ctx, str);
+		return JS_NewStringLen(ctx, str, len);
 	}
 #if defined(_WIN32)
-	int utf8_len = 0;
 	wchar_t* wide_buffer = NULL;
 	char* utf8_buffer = NULL;
+	int wide_len = 0;
+	int utf8_len = 0;
+	JSValue ret = JS_UNDEFINED;
 
-	int wide_len = MultiByteToWideChar(CP_ACP, 0, str, -1, NULL, 0);
+	/* ACP -> UTF-16 */
+	wide_len = MultiByteToWideChar(CP_ACP, 0, str, len, NULL, 0);
 	if (wide_len <= 0) {
 		return JS_EXCEPTION;
 	}
-	wide_buffer = (wchar_t*)malloc(sizeof(wchar_t) * wide_len);
+	wide_buffer = (wchar_t*)malloc(sizeof(wchar_t) * (wide_len + 1));
 	if (!wide_buffer) {
 		return JS_EXCEPTION;
 	}
-	if (MultiByteToWideChar(CP_ACP, 0, str, -1, wide_buffer, wide_len) == 0) {
+	if (MultiByteToWideChar(CP_ACP, 0, str, len,
+							wide_buffer, wide_len) == 0) {
 		free(wide_buffer);
 		return JS_EXCEPTION;
 	}
-	utf8_len = WideCharToMultiByte(CP_UTF8, 0, wide_buffer, -1, NULL, 0, NULL, NULL);
+	wide_buffer[wide_len] = L'\0';
+
+	/* UTF-16 -> UTF-8 */
+	utf8_len = WideCharToMultiByte(CP_UTF8, 0, wide_buffer, wide_len,
+								   NULL, 0, NULL, NULL);
 	if (utf8_len <= 0) {
 		free(wide_buffer);
 		return JS_EXCEPTION;
 	}
-	utf8_buffer = JS_Mallocz(ctx, char, utf8_len);
+	utf8_buffer = JS_Mallocz(ctx, char, utf8_len + 1);
 	if (!utf8_buffer) {
 		free(wide_buffer);
 		return JS_EXCEPTION;
 	}
-	if (WideCharToMultiByte(CP_UTF8, 0, wide_buffer, -1, utf8_buffer, utf8_len, NULL, NULL) == 0) {
+	if (WideCharToMultiByte(CP_UTF8, 0, wide_buffer, wide_len,
+							utf8_buffer, utf8_len, NULL, NULL) == 0) {
 		free(wide_buffer);
 		JS_Free(ctx, utf8_buffer);
 		return JS_EXCEPTION;
 	}
+	utf8_buffer[utf8_len] = '\0';
 	free(wide_buffer);
 
-	JSValue ret = JS_NewString(ctx, utf8_buffer);
+	ret = JS_NewStringLen(ctx, utf8_buffer, utf8_len);
 	JS_Free(ctx, utf8_buffer);
 	return ret;
 #else
@@ -162,49 +231,25 @@ static inline JSValue JS_NewStringA(JSContext* ctx, const char* str) {
 #endif
 }
 
-/*Note : Invoke JS_ToCString and auto convert UTF8 str to default system encoding */
+/*Note : Auto convert the str of default system encoding to UTF8 and return JS_NewString*/
+static inline JSValue JS_NewStringA(JSContext* ctx, const char* str) {
+	if (!ctx || !str)
+		return JS_EXCEPTION;
+	return JS_NewStringLenA(ctx, str, strlen(str));
+}
+
+/*Note : Invoke JS_ToCStringLen and auto convert UTF8 str to default system encoding */
+static inline const char* JS_ToCStringLenA(JSContext* ctx, size_t* plen, JSValue val) {
+	size_t len;
+	const char* cstr = JS_ToCStringLen(ctx, &len, val);
+	const char* str = JS_DupCStringLenA(ctx, cstr, len, plen);
+	JS_FreeCString(ctx, cstr);
+	return str;
+}
+
+/*Note : Invoke JS_ToCStringLen and auto convert UTF8 str to default system encoding */
 static inline const char* JS_ToCStringA(JSContext* ctx, JSValue val) {
-#if defined(_WIN32)
-	const char* content = JS_ToCString(ctx, val);
-	char* acp_str = NULL;
-	wchar_t* wide_buffer = NULL;
-	int wide_len = 0;
-	int utf8_len = 0;
-
-	wide_len = MultiByteToWideChar(CP_UTF8, 0, content, -1, NULL, 0);
-	if (wide_len <= 0) {
-		return NULL;
-	}
-	wide_buffer = (wchar_t*)malloc(sizeof(wchar_t) * wide_len);
-	if (!wide_buffer) {
-		return NULL;
-	}
-	if (MultiByteToWideChar(CP_UTF8, 0, content, -1, wide_buffer, wide_len) == 0) {
-		free(wide_buffer);
-		return NULL;
-	}
-	JS_FreeCString(ctx, content);
-
-	utf8_len = WideCharToMultiByte(CP_ACP, 0, wide_buffer, -1, NULL, 0, NULL, NULL);
-	if (utf8_len <= 0) {
-		free(wide_buffer);
-		return NULL;
-	}
-	acp_str = JS_Mallocz(ctx, char, utf8_len);
-	if (!acp_str) {
-		free(wide_buffer);
-		return NULL;
-	}
-	if (WideCharToMultiByte(CP_ACP, 0, wide_buffer, -1, acp_str, utf8_len, NULL, NULL) == 0) {
-		free(wide_buffer);
-		JS_Free(ctx, acp_str);
-		return NULL;
-	}
-	free(wide_buffer);
-	return acp_str;
-#else
-#error "other types of compilers are not supported yet";
-#endif
+	return JS_ToCStringLenA(ctx, NULL, val);
 }
 
 /*Note : Invoke JS_Free */
@@ -262,45 +307,63 @@ namespace quickjs {
 	class JSArgumentRef;
 	class JSArguments;
 
-	std::string to_string(const JSValueRef& ref);
+	std::string to_string(const JSValueRef& ref) noexcept;
 	template<typename T>
-	quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val);
+	quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) noexcept;
 
 	namespace JSCStringProvider {
-		struct JSONStringConverter {
-			const char* unwrap(JSContext* ctx, JSValue val) {
-				JSValue jsstr = JS_JSONStringify(ctx, val, JS_UNDEFINED, JS_UNDEFINED);
-				if (!JS_IsString(jsstr)) {
-					JS_FreeValue(ctx, jsstr);
-					throw quickjs::type_error("stringify error");
+		struct JSONStringParser {
+			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) noexcept {
+				JSValue jsstr;
+				if (JS_IsString(val))
+					jsstr = JS_DupValue(ctx, val);
+				else
+					jsstr = JS_JSONStringify(ctx, val, JS_UNDEFINED, JS_UNDEFINED);
+				if (JS_IsException(jsstr)) {
+					return false;
 				}
-				const char* str = JS_ToCString(ctx, jsstr);
+				size_t len;
+				const char* cstr = JS_ToCStringLen(ctx, &len, jsstr);
 				JS_FreeValue(ctx, jsstr);
-				return str;
+				if (!cstr)
+					return false;
+				str.assign(cstr, len);
+				JS_FreeCString(ctx, cstr);
+				return true;
 			}
-			void release(JSContext* ctx, const char* str) {
-				if (ctx && str)
-					JS_FreeCString(ctx, str);
+		};
+
+		struct JSNullByteStringReader {
+			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) noexcept {
+				size_t len;
+				const char* cstr = JS_ToCStringLen(ctx, &len, val);
+				if (!cstr)
+					return false;
+				str.assign(cstr, len);
+				JS_FreeCString(ctx, cstr);
+				return true;
 			}
 		};
 
 		struct DefaultJSCStringCharacter {
-			const char* unwrap(JSContext* ctx, JSValue val) {
-				return JS_ToCString(ctx, val);
-			}
-			void release(JSContext* ctx, const char* str) {
-				if (ctx && str)
-					JS_FreeCString(ctx, str);
+			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) noexcept {
+				const char* cstr = JS_ToCString(ctx, val);
+				if (!cstr)
+					return false;
+				str = std::string(cstr);
+				JS_FreeCString(ctx, cstr);
+				return true;
 			}
 		};
 
 		struct DefaultJSCStringSystemCharacter {
-			const char* unwrap(JSContext* ctx, JSValue val) {
-				return JS_ToCStringA(ctx, val);
-			}
-			void release(JSContext* ctx, const char* str) {
-				if (ctx && str)
-					JS_FreeCStringA(ctx, str);
+			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) noexcept {
+				const char* cstr = JS_ToCStringA(ctx, val);
+				if (!cstr)
+					return false;
+				str = std::string(cstr);
+				JS_FreeCStringA(ctx, cstr);
+				return true;
 			}
 		};
 	}
@@ -311,8 +374,15 @@ namespace quickjs {
 	using JSCString = JSCStringRef<DefaultCharacter>;
 	/*convert UTF8 to the default system encoding*/
 	using JSCStringA = JSCStringRef<SystemCharacter>;
-	/*convert JSValue to JSON string*/
-	using JSONString = JSCStringRef<quickjs::JSCStringProvider::JSONStringConverter>;
+	/*convert JSValue to JSON string, support null-byte strings*/
+	using JSONString = JSCStringRef<quickjs::JSCStringProvider::JSONStringParser>;
+	/**
+	* @brief Support for null-byte strings: strings that may contain embedded NUL ('\0').
+	*
+	* Unlike JS_ToCString, this uses JS_ToCStringLen so the full length is honored
+	* and embedded NUL bytes are preserved.
+	*/
+	using JSNullByteString = JSCStringRef<quickjs::JSCStringProvider::JSNullByteStringReader>;
 
 	namespace type_traits {
 		template <typename T>
@@ -867,79 +937,104 @@ namespace quickjs {
 		return quickjs::JSMemRef<T>(rt, static_cast<T*>(js_mallocz_rt(rt, sizeof(T) * size)));
 	}
 
-	template<typename Character = quickjs::DefaultCharacter>
+	template<typename Provider = quickjs::DefaultCharacter>
 	class JSCStringRef {
 	public:
 		JSCStringRef() noexcept = default;
 
 		explicit JSCStringRef(JSContext* ctx, JSValueConst val)
-			:context(ctx), strptr(character.unwrap(ctx, val)) {}
-
-		explicit JSCStringRef(JSContext* ctx, JSAtom atom) :context(ctx) {
-			JSValue v = JS_AtomToValue(ctx, atom);
-			strptr = character.unwrap(ctx, v);
-			JS_FreeValue(ctx, v);
+			:context(ctx) {
+			is_valid = provider.unwrap(ctx, val, string);
 		}
 
-		JSCStringRef(const JSCStringRef& other) = delete;
+		explicit JSCStringRef(JSContext* ctx, JSAtom atom) :context(ctx) {
+			JSValue val = JS_AtomToValue(ctx, atom);
+			is_valid = provider.unwrap(ctx, val, string);
+			JS_FreeValue(ctx, val);
+		}
 
-		JSCStringRef(JSCStringRef&& other) noexcept {
-			reset(other.context, other.strptr);
-			other.release();
+		JSCStringRef(const JSCStringRef& other)
+			: context(other.context),
+			provider(other.provider),
+			is_valid(other.is_valid),
+			string(other.string) {}
+
+		JSCStringRef(JSCStringRef&& other) noexcept
+			: context(other.context),
+			is_valid(other.is_valid),
+			provider(std::move(other.provider)),
+			string(std::move(other.string)) {
+			other.context = nullptr;
+			other.string.clear();
+			other.is_valid = false;
 		}
 
 		~JSCStringRef() {
-			if (context && strptr) {
-				character.release(context, strptr);
-			}
-			release();
+			context = nullptr;
+			string.clear();
+			is_valid = false;
 		}
 
-		JSCStringRef& operator=(const JSCStringRef& other) = delete;
-
-		JSCStringRef& operator=(JSCStringRef&& other) noexcept {
-			reset(other.context, other.strptr);
-			other.release();
+		JSCStringRef& operator=(const JSCStringRef& other) {
+			if (this != &other) {
+				context = other.context;
+				provider = other.provider;
+				string = other.string;
+				is_valid = other.is_valid;
+			}
 			return *this;
 		}
 
-		const char* get() const noexcept {
-			return strptr;
+		JSCStringRef& operator=(JSCStringRef&& other) noexcept {
+			if (this != &other) {
+				context = other.context;
+				is_valid = other.is_valid;
+				provider = std::move(other.provider);
+				string = std::move(other.string);
+				other.context = nullptr;
+				other.string.clear();
+				other.is_valid = false;
+			}
+			return *this;
 		}
 
-		const char* operator*() const noexcept {
-			return strptr;
+		std::string get() const noexcept {
+			return string;
+		}
+
+		std::string operator*() const noexcept {
+			return string;
 		}
 
 		explicit operator bool() const noexcept {
-			return strptr != nullptr;
+			return is_valid;
 		}
 
 		operator std::string() const noexcept {
-			return std::string(strptr);
+			return string;
 		}
 
-		const char* release() noexcept {
+		std::string release() noexcept {
 			context = nullptr;
-			return std::exchange(strptr, nullptr);
+			is_valid = false;
+			return std::exchange(string, std::string());
 		}
 
-		void reset(JSContext* ctx = nullptr, const char* cstr = nullptr) noexcept {
-			if (context && strptr) {
-				character.release(context, strptr);
-			}
+		void reset(JSContext* ctx = nullptr, std::string str = std::string(), bool valid = false) noexcept {
 			context = ctx;
-			strptr = cstr;
+			string = str;
+			is_valid = valid;
 		}
 
 		friend std::ostream& operator<<(std::ostream& os, const JSCStringRef& s) {
-			return os << s.strptr;
+			return os << s.string;
 		}
 
 	private:
-		const char* strptr = nullptr;
 		JSContext* context = nullptr;
-		Character character;
+		bool is_valid = false;
+		Provider provider;
+		std::string string;
 	};
 
 	class JSAtomRef {
@@ -947,9 +1042,7 @@ namespace quickjs {
 		JSAtomRef() noexcept = default;
 
 		explicit JSAtomRef(JSContext* ctx, JSAtom atom)
-			:context(ctx), jsatom(atom) {
-
-		}
+			:context(ctx), jsatom(atom) {}
 
 		explicit JSAtomRef(JSContext* ctx, JSValueConst val)
 			:context(ctx), jsatom(JS_ValueToAtom(ctx, val)) {}
@@ -2018,13 +2111,16 @@ namespace quickjs {
 			std::string err;
 			if (!cast_check<T>(err, strict))
 				throw type_error(err);
-			return T(context, jsvalue);
+			T s = T(context, jsvalue);
+			if (!s)
+				throw type_error("string is invalid");
+			return s;
 		}
 
 		JSValue jsvalue = JS_UNINITIALIZED;
 		JSContext* context = nullptr;
 
-		friend std::string to_string(const JSValueRef& ref);
+		friend std::string to_string(const JSValueRef& ref) noexcept;
 	};
 
 	/**
@@ -2572,22 +2668,24 @@ namespace quickjs {
 	 * @param ref The JSValueRef to convert.
 	 * @return The string representation, or an empty string on failure.
 	 */
-	inline std::string to_string(const quickjs::JSValueRef& ref) {
+	inline std::string to_string(const quickjs::JSValueRef& ref) noexcept {
 		if (!ref.context)
 			return std::string();
-		const char* cstr;
+		std::string str;
 		if (ref.is<JSType::exception>()) {
 			JSValue err = JS_GetException(ref.context);
-			cstr = JS_ToCString(ref.context, err);
+			const char* cstr = JS_ToCString(ref.context, err);
+			if (cstr)
+				str = std::string(cstr);
 			JS_FreeValue(ref.context, err);
 		} else {
-			cstr = JS_ToCString(ref.context, ref.jsvalue);
+			size_t len = 0;
+			const char* cstr = JS_ToCStringLen(ref.context, &len, ref.jsvalue);
+			if (cstr)
+				str.assign(cstr, len);
+			JS_FreeCString(ref.context, cstr);
 		}
-		if (!cstr)
-			return std::string();
-		std::string result(cstr);
-		JS_FreeCString(ref.context, cstr);
-		return result;
+		return str;
 	}
 
 	/**
@@ -2610,20 +2708,20 @@ namespace quickjs {
 	* @throws std::exception on unsupported or failed conversion.
 	*/
 	template<typename T>
-	inline quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) {
+	inline quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) noexcept {
 		return type_traits::detail::new_value_impl<T>(ctx, val);
 	}
 
 	template <typename Signature, typename Fn>
 	inline std::enable_if_t <type_traits::function::has_signature<std::decay_t<Fn>>::value&&
 		std::is_same_v<Signature, typename type_traits::function::function_traits<std::decay_t<Fn>>::signature>, quickjs::JSValueRef>
-		toJSValue(JSContext* ctx, const Fn& fn) {
+		toJSValue(JSContext* ctx, const Fn& fn) noexcept {
 		return type_traits::detail::new_value_impl<std::function<Signature>>(ctx, fn);
 	}
 
 	template <typename Fn>
 	inline std::enable_if_t<type_traits::function::has_signature<std::decay_t<Fn>>::value, quickjs::JSValueRef>
-		toJSValue(JSContext* ctx, Fn&& fn) {
+		toJSValue(JSContext* ctx, Fn&& fn) noexcept {
 		using fn_t = std::function<typename type_traits::function::function_traits<std::decay_t<Fn>>::signature>;
 		return type_traits::detail::new_value_impl<fn_t>(ctx, fn_t(std::forward<Fn>(fn)));
 	}
