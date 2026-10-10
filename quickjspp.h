@@ -266,13 +266,31 @@ namespace quickjs {
 	template<typename T>
 	quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val);
 
-	namespace JSCStringCharacter {
+	namespace JSCStringProvider {
+		struct JSONStringConverter {
+			const char* unwrap(JSContext* ctx, JSValue val) {
+				JSValue jsstr = JS_JSONStringify(ctx, val, JS_UNDEFINED, JS_UNDEFINED);
+				if (JS_IsString(jsstr)) {
+					JS_FreeValue(ctx, jsstr);
+					throw quickjs::type_error("stringify error");
+				}
+				const char* str = JS_ToCString(ctx, jsstr);
+				JS_FreeValue(ctx, jsstr);
+				return str;
+			}
+			void release(JSContext* ctx, const char* str) {
+				if (ctx && str)
+					JS_FreeCString(ctx, str);
+			}
+		};
+
 		struct DefaultJSCStringCharacter {
 			const char* unwrap(JSContext* ctx, JSValue val) {
 				return JS_ToCString(ctx, val);
 			}
 			void release(JSContext* ctx, const char* str) {
-				JS_FreeCString(ctx, str);
+				if (ctx && str)
+					JS_FreeCString(ctx, str);
 			}
 		};
 
@@ -281,17 +299,20 @@ namespace quickjs {
 				return JS_ToCStringA(ctx, val);
 			}
 			void release(JSContext* ctx, const char* str) {
-				JS_FreeCStringA(ctx, str);
+				if (ctx && str)
+					JS_FreeCStringA(ctx, str);
 			}
 		};
 	}
-	using DefaultCharacter = quickjs::JSCStringCharacter::DefaultJSCStringCharacter;
+	using DefaultCharacter = quickjs::JSCStringProvider::DefaultJSCStringCharacter;
 	/*convert UTF8 to the default system encoding*/
-	using SystemCharacter = quickjs::JSCStringCharacter::DefaultJSCStringSystemCharacter;
+	using SystemCharacter = quickjs::JSCStringProvider::DefaultJSCStringSystemCharacter;
 
 	using JSCString = JSCStringRef<DefaultCharacter>;
 	/*convert UTF8 to the default system encoding*/
 	using JSCStringA = JSCStringRef<SystemCharacter>;
+	/*convert JSValue to JSON string*/
+	using JSONString = JSCStringRef<quickjs::JSCStringProvider::JSONStringConverter>;
 
 	namespace type_traits {
 		template <typename T>
@@ -302,6 +323,12 @@ namespace quickjs {
 			using value_type = T;
 			using allocator_type = Alloc;
 		};
+
+		template <typename T>
+		struct is_string_ref : std::false_type {};
+
+		template <typename T>
+		struct is_string_ref<quickjs::JSCStringRef<T>> : std::true_type {};
 
 		template <typename T>
 		struct is_std_map : std::false_type {};
@@ -668,8 +695,7 @@ namespace quickjs {
 			}
 
 			template<typename T>
-			std::enable_if_t<std::is_same_v<std::decay_t<T>, quickjs::JSCString>
-				|| std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>, quickjs::JSValueRef>
+			std::enable_if_t<type_traits::is_string_ref<std::decay_t<T>>::value, quickjs::JSValueRef>
 				new_value_impl(JSContext* ctx, const T& val) {
 				return JSValueRef(ctx, JS_NewStringA(ctx, *val));
 			}
@@ -1102,8 +1128,7 @@ namespace quickjs {
 			} else if (std::is_same_v<std::decay_t<T>, std::string>
 					   || std::is_same_v<std::decay_t<T>, const char*>
 					   || std::is_same_v<std::decay_t<T>, char*>
-					   || std::is_same_v<std::decay_t<T>, quickjs::JSCString>
-					   || std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>) {
+					   || type_traits::is_string_ref<std::decay_t<T>>::value) {
 				return is<JSType::string>();
 			} else if (type_traits::is_std_array<T>::value
 					   || type_traits::is_std_set<T>::value
@@ -1385,8 +1410,7 @@ namespace quickjs {
 			} else if (std::is_same_v<std::decay_t<T>, std::string>
 					   || std::is_same_v<std::decay_t<T>, const char*>
 					   || std::is_same_v<std::decay_t<T>, char*>
-					   || std::is_same_v<std::decay_t<T>, quickjs::JSCString>
-					   || std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>) {
+					   || type_traits::is_string_ref<std::decay_t<T>>::value) {
 				return "string";
 			} else if (type_traits::is_std_array<T>::value
 					   || type_traits::is_std_set<T>::value
@@ -1543,8 +1567,7 @@ namespace quickjs {
 
 		template<typename T>
 		std::enable_if_t<std::is_same_v<std::decay_t<T>, std::string>
-			|| std::is_same_v<std::decay_t<T>, quickjs::JSCString>
-			|| std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>, bool>
+			|| type_traits::is_string_ref<std::decay_t<T>>::value, bool>
 			cast_check(std::string& err, bool strict) const {
 			cast_check_throw(err, strict);
 			if (is<JSType::symbol>()) {
@@ -1978,21 +2001,12 @@ namespace quickjs {
 		}
 
 		template<typename T>
-		std::enable_if_t<std::is_same_v<std::decay_t<T>, quickjs::JSCString>, T>
+		std::enable_if_t<type_traits::is_string_ref<std::decay_t<T>>::value, T>
 			as_impl(bool strict, bool nested) const {
 			std::string err;
 			if (!cast_check<T>(err, strict))
 				throw type_error(err);
-			return quickjs::JSCString(context, jsvalue);
-		}
-
-		template<typename T>
-		std::enable_if_t<std::is_same_v<std::decay_t<T>, quickjs::JSCStringA>, T>
-			as_impl(bool strict, bool nested) const {
-			std::string err;
-			if (!cast_check<T>(err, strict))
-				throw type_error(err);
-			return quickjs::JSCStringA(context, jsvalue);
+			return T(context, jsvalue);
 		}
 
 		JSValue jsvalue = JS_UNDEFINED;
