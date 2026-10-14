@@ -2242,6 +2242,10 @@ namespace quickjs {
 			return JSValueRef::release();
 		}
 
+		bool exists() const {
+			return property_exists;
+		}
+
 		virtual ~JSPropertyRef() {
 			reset();
 		}
@@ -2362,6 +2366,10 @@ namespace quickjs {
 			return JSValueRef::release();
 		}
 
+		bool exists() const {
+			return argument_exists;
+		}
+
 		virtual ~JSArgumentRef() {
 			argument_idx = -1;
 			argument_exists = false;
@@ -2409,6 +2417,34 @@ namespace quickjs {
 			if (!is<T>()) {
 				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
 			}
+		}
+
+		/**
+		* @brief Checks whether the JSValue matches any of the given types.
+		*
+		* @return true if the value matches at least one type; false otherwise.
+		*/
+		template<typename... Args, typename = std::enable_if_t<std::conjunction<std::is_same<Args, JSType>...>::value>>
+		bool matches(Args... types) const {
+			constexpr size_t arg_size = sizeof...(Args);
+			const JSType tags[] = { static_cast<JSType>(types)... };
+			for (size_t i = 0; i < arg_size; i++) {
+				if (is(tags[i])) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		template<>
+		bool matches() const = delete;
+
+		/**
+		* @brief Checks whether the JSValue holds an actual value, i.e. is not
+		*        uninitialized, null, or undefined.
+		*/
+		bool hasValue() const {
+			return !matches(JSType::uninitialized, JSType::null, JSType::undefined);
 		}
 
 	protected:
