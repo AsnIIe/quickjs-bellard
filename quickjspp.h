@@ -1182,6 +1182,36 @@ namespace quickjs {
 			return as<quickjs::JSCStringA>();
 		}
 
+		/**
+		* @brief Strict equality comparison with JavaScript `===` semantics.
+		*
+		* @details
+		* Comparison behavior of related equality APIs:
+		* | API              | NaN vs NaN | +0 vs -0 | Type Coercion | JS Equivalent Semantic     |
+		* |------------------|------------|----------|---------------|----------------------------|
+		* | JS_StrictEq      | false      | true     | None          | `===`                      |
+		* | JS_SameValue     | true       | false    | None          | `Object.is()`              |
+		* | JS_SameValueZero | true       | true     | None          | Internal for Map/Set/includes |
+		*
+		* Short-circuit optimization logic:
+		* 1. Return false immediately if either handle is uninitialized.
+		* 2. Return true immediately if comparing to self or underlying JS handles match,
+		*    skips expensive JS_StrictEq engine call.
+		* 3. Fallback to JS_StrictEq for full engine-level strict equality check.
+		*
+		* @param other The JSValueRef instance to compare against.
+		* @return True if strictly equal; otherwise false.
+		*
+		* @see JS_StrictEq
+		*/
+		bool operator==(const JSValueRef& other) const {
+			return JS_StrictEq(context, jsvalue, other.jsvalue);
+		}
+
+		bool operator!=(const JSValueRef& other) const {
+			return !(*this == other);
+		}
+
 		/*Note: When using the class quickjs::JSPropertyRef, it must be defined after quickjs::JSPropertyRef */
 		//Note: If is object
 		quickjs::JSPropertyRef operator[](const std::string& key) const;
@@ -1447,6 +1477,18 @@ namespace quickjs {
 				throw type_error(quickjs::format_str("%s is required", type_name<T>().c_str()));
 			}
 			return as<T>();
+		}
+
+		/**
+		* @brief Checks whether the stored value equals @p val.
+		*
+		* @tparam T The type to compare against.
+		* @param val The value to compare with.
+		* @return true if the stored value is of type @p T and equals @p val, false otherwise.
+		*/
+		template<typename T>
+		bool equals(const T& val) const {
+			return equals_impl<T>(val);
 		}
 
 		template<typename T>
@@ -2116,6 +2158,43 @@ namespace quickjs {
 			if (!s)
 				throw type_error("string is invalid");
 			return s;
+		}
+
+		template<typename T>
+		std::enable_if_t<!std::is_same_v<std::decay_t<T>, JSValue>
+			&& !std::is_same_v<std::decay_t<T>, JSValueRef>
+			&& !std::is_base_of_v<JSValueRef, std::decay_t<T>>
+			&& !std::is_same_v<std::decay_t<T>, char*>
+			&& !std::is_same_v<std::decay_t<T>, const char*>, bool>
+			equals_impl(const T& val) const {
+			if (!is<T>())
+				return false;
+			return as<T>() == val;
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, char*>, bool>
+			equals_impl(const T& val) const {
+			return equals<const char*>(val);
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, const char*>, bool>
+			equals_impl(const T& val) const {
+			return equals<std::string>(val);
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, JSValue>, bool>
+			equals_impl(const T& val) const {
+			return JS_StrictEq(context, jsvalue, val);
+		}
+
+		template<typename T>
+		std::enable_if_t<std::is_same_v<std::decay_t<T>, JSValueRef>
+			|| std::is_base_of_v<JSValueRef, std::decay_t<T>>, bool>
+			equals_impl(const T& val) const {
+			return *this == val;
 		}
 
 		JSValue jsvalue = JS_UNINITIALIZED;
