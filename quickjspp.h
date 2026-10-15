@@ -310,11 +310,11 @@ namespace quickjs {
 	std::string to_string(const JSValueRef& ref) noexcept;
 	JSValue throwNamedError(JSContext* ctx, std::string name, const char* fmt, ...) noexcept;
 	template<typename T>
-	quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) noexcept;
+	quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val);
 
 	namespace JSCStringProvider {
 		struct JSONStringParser {
-			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) noexcept {
+			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) {
 				JSValue jsstr;
 				if (JS_IsString(val))
 					jsstr = JS_DupValue(ctx, val);
@@ -335,7 +335,7 @@ namespace quickjs {
 		};
 
 		struct JSNullByteStringReader {
-			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) noexcept {
+			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) {
 				size_t len;
 				const char* cstr = JS_ToCStringLen(ctx, &len, val);
 				if (!cstr)
@@ -347,7 +347,7 @@ namespace quickjs {
 		};
 
 		struct DefaultJSCStringCharacter {
-			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) noexcept {
+			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) {
 				const char* cstr = JS_ToCString(ctx, val);
 				if (!cstr)
 					return false;
@@ -358,7 +358,7 @@ namespace quickjs {
 		};
 
 		struct DefaultJSCStringSystemCharacter {
-			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) noexcept {
+			bool unwrap(JSContext* ctx, JSValueConst val, std::string& str) {
 				const char* cstr = JS_ToCStringA(ctx, val);
 				if (!cstr)
 					return false;
@@ -585,6 +585,36 @@ namespace quickjs {
 			using function_t = std::function<typename function_traits<std::decay_t<F>>::signature>;
 		}
 
+		namespace converter {
+			template <typename Converter, typename T>
+			struct has_wrap {
+				template <typename U>
+				static auto test(int) -> std::is_same<decltype(std::declval<U>().wrap(
+					std::declval<JSContext*>(),
+					std::declval<T>()
+				)), JSValue>;
+
+				template <typename>
+				static std::false_type test(...);
+
+				static constexpr bool value = decltype(test<Converter>(0))::value;
+			};
+
+			template <typename Converter, typename T>
+			struct has_unwrap {
+				template <typename U>
+				static auto test(int) -> std::is_same<decltype(std::declval<U>().unwrap(
+					std::declval<JSContext*>(),
+					std::declval<JSValue>()
+				)), T>;
+
+				template <typename>
+				static std::false_type test(...);
+
+				static constexpr bool value = decltype(test<Converter>(0))::value;
+			};
+		}
+
 		namespace types {
 			template <typename Container>
 			using element_t = template_type_t<Container, 0>;
@@ -717,6 +747,14 @@ namespace quickjs {
 				static void js_fn_finalizer(void* data) {
 					delete (JSFnContext<T>*)data;
 				}
+			}
+
+			template <typename Converter, typename T>
+			std::enable_if_t<type_traits::converter::has_wrap<std::decay_t<Converter>, const T&>::value,
+				quickjs::JSValueRef>
+				new_value_impl(JSContext* ctx, const T& val) {
+				Converter converter{};
+				return JSValueRef(ctx, converter.wrap(ctx, val));
 			}
 
 			template<typename T>
@@ -1434,6 +1472,12 @@ namespace quickjs {
 			return as_impl_<T>(false, false);
 		}
 
+		template<typename Converter, typename T>
+		std::enable_if_t<type_traits::converter::has_unwrap<Converter, std::decay_t<T>>::value, T>
+			cast() const {
+			return as_impl<Converter, T>(false, false);
+		}
+
 		/**
 		 * @brief Converts the current JSValue to T per JavaScript's rules,
 		 *        with strict checking of nested element types.
@@ -1788,6 +1832,17 @@ namespace quickjs {
 		template<typename T>
 		T as_impl_(bool strict, bool nested) const {
 			return as_impl<T>(strict, nested);
+		}
+
+		template <typename Converter, typename T>
+		std::enable_if_t<type_traits::converter::has_unwrap<Converter, std::decay_t<T>>::value, T>
+			as_impl(bool strict, bool nested) const {
+			Converter converter{};
+			try {
+				return converter.unwrap(context, jsvalue);
+			} catch (const std::exception& error) {
+				throw type_error(error.what());
+			}
 		}
 
 		template<typename Map>
@@ -2857,20 +2912,26 @@ namespace quickjs {
 	* @throws std::exception on unsupported or failed conversion.
 	*/
 	template<typename T>
-	inline quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) noexcept {
+	inline quickjs::JSValueRef toJSValue(JSContext* ctx, const T& val) {
 		return type_traits::detail::new_value_impl<T>(ctx, val);
+	}
+
+	template<typename Converter, typename T>
+	inline std::enable_if_t <type_traits::converter::has_wrap<std::decay_t<Converter>, const T&>::value, quickjs::JSValueRef>
+		toJSValue(JSContext* ctx, const T& val) {
+		return type_traits::detail::new_value_impl<Converter, T>(ctx, val);
 	}
 
 	template <typename Signature, typename Fn>
 	inline std::enable_if_t <type_traits::function::has_signature<std::decay_t<Fn>>::value&&
 		std::is_same_v<Signature, typename type_traits::function::function_traits<std::decay_t<Fn>>::signature>, quickjs::JSValueRef>
-		toJSValue(JSContext* ctx, const Fn& fn) noexcept {
+		toJSValue(JSContext* ctx, const Fn& fn) {
 		return type_traits::detail::new_value_impl<std::function<Signature>>(ctx, fn);
 	}
 
 	template <typename Fn>
 	inline std::enable_if_t<type_traits::function::has_signature<std::decay_t<Fn>>::value, quickjs::JSValueRef>
-		toJSValue(JSContext* ctx, Fn&& fn) noexcept {
+		toJSValue(JSContext* ctx, Fn&& fn) {
 		using fn_t = std::function<typename type_traits::function::function_traits<std::decay_t<Fn>>::signature>;
 		return type_traits::detail::new_value_impl<fn_t>(ctx, fn_t(std::forward<Fn>(fn)));
 	}
