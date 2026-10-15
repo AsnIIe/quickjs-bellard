@@ -217,10 +217,26 @@ rqsort
 strstart
 unicode_from_utf8
 unicode_to_utf8
+
+;The C API added in the new version.
 JS_NewSymbol
 JS_NewBigInt128
 JS_ToBigInt128
 JS_ToBigInt128Sat
+JS_ToObject
+JS_ToPrimitive
+JS_ToInt32Sat
+JS_ToCStringNZ
+JS_ToUTF32String
+JS_CreateFromConstructor
+JS_ThisDateValue
+JS_OrdinaryIsInstanceOf
+JS_GetIterator
+JS_IteratorNext
+JS_IteratorClose
+JS_NewCConstructor
+JS_SetContextValue
+JS_GetContextValue
 
 ;The following is the extension function, add by zenx
 JS_IsDate
